@@ -41,7 +41,8 @@ The skill lies in planning, and in reading why a plan went wrong.
 ### Units and board
 
 - **One copy of each unit type on the board.** Further copies sit inactive on the bench.
-- **Limited bench slots** (TFT-style), so players can only chase a few upgrades at once.
+- **Bench: 9 slots** (as in TFT), enough to work on several upgrades at once while still
+  forcing choices.
 - **Levelling:** three copies merge into the next level (3 for level 2, 9 for level 3).
   The merged unit is the one on the board, so **its program carries over** and gains an
   empty node to fill. If no copy is on the board, the merged unit starts unprogrammed.
@@ -66,9 +67,15 @@ Main menu → **run loop** (Planning → Battle → Result, repeated each round)
 Run summary → Main menu.
 
 - **Main menu:** new run, how to play, settings.
-- **Planning (timed):** shop, bench, board placement, and the card editor.
+- **Planning (timed):** shop, bench, board placement, and the card editor. The enemy
+  board stays hidden until the battle starts.
+- **Card editor: a side drawer** over the right of the planning screen, so the board stays
+  visible. Hovering a block highlights its reach on the board (e.g. Taunt's 2 cells).
+  The shop is hidden while it's open; the timer keeps running.
   60 seconds, or 75 once the player has 5+ units. A **Ready** button ends it early.
-- **Battle:** watch the fight, at 1×/2×/4× speed or skipped to the end.
+- **Battle:** watch the fight, at 1×/2×/4× speed or skipped to the end. On-board numbers
+  and card badges are always on; the **card trace panel** is an optional toggle,
+  **off by default** so new players aren't overwhelmed.
 - **Result:** win/loss, HP lost, and a gold breakdown for next round.
 - **Game over:** victory or defeat, rounds survived, then the run summary.
 - **Run summary:** stats per round and a replay of any battle from its seed.
@@ -80,7 +87,7 @@ All numbers in this section and the next are agreed starting points, to tune aft
 
 - 5 offers per round. **Buy 3 gold**, **reroll 2 gold**, **sell** for the purchase price
   of the copies inside (3 per copy).
-- **Bench: 4 slots.** Buying a third copy merges immediately, freeing slots.
+- **Bench: 9 slots.** Buying a third copy merges immediately, freeing slots.
 - **Shared pool:** about 12 copies of each class, drawn from the run's seeded RNG.
 - **Programs persist between rounds.** Click any unit (board or bench) to edit its cards.
 
@@ -95,8 +102,9 @@ All numbers in this section and the next are agreed starting points, to tune aft
 The renderer turns each tick's events into short animations over the tick's duration.
 In priority order:
 
-1. **Card fired:** a badge above the acting unit showing the action; a side panel lists
-   every unit's cards with the running one highlighted.
+1. **Card fired:** a badge above the acting unit showing the action. The optional card
+   trace panel lists every unit's cards: the one that fired highlighted, the ones that
+   fell through struck out.
 2. **Health bars, level pips,** and a team-coloured ring under each unit.
 3. **Floating numbers:** damage, larger yellow crits with "!", green heals, "Blocked".
 4. **Smooth movement and attacks:** glide between cells, melee lunges, projectiles.
