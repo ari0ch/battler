@@ -18,7 +18,7 @@ pub struct BattlePlugin;
 
 impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
-        let watching = in_state(RunPhase::Battle).or(in_state(AppState::Replay));
+        let watching = in_state(RunPhase::Battle).or_else(in_state(AppState::Replay));
         app.add_systems(OnEnter(RunPhase::Battle), |mut rev: ResMut<Rev>| rev.bump())
             .add_systems(OnEnter(AppState::Replay), |mut rev: ResMut<Rev>| rev.bump())
             .add_systems(

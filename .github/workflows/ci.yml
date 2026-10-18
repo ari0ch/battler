@@ -33,7 +33,7 @@ jobs:
       # readable through the GitHub API even where raw logs aren't.
       - name: Clippy
         run: |
-          if ! cargo clippy -p battler --all-targets --message-format=short -- -D warnings 2> clippy.txt; then
+          if ! cargo clippy -p battler --all-targets --color never --message-format=short -- -D warnings 2> clippy.txt; then
             cat clippy.txt
             msgs=$(grep -E '^[^ ]+:[0-9]+:[0-9]+: ' clippy.txt | head -200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=clippy::${msgs}"
