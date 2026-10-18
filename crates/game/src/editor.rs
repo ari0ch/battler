@@ -250,10 +250,10 @@ fn chip(parent: &mut ChildSpawnerCommands, block: Block) {
         BorderColor::all(line),
         ui::HoverColors { normal: fill, hover: line },
     ));
-    if let Block::Act(a) = block {
-        if let Some(ability) = a.ability() {
-            e.insert(PaletteAbility(ability));
-        }
+    if let Block::Act(a) = block
+        && let Some(ability) = a.ability()
+    {
+        e.insert(PaletteAbility(ability));
     }
     e.with_child(text(cards::block_label(block), 12.0, ink));
 }

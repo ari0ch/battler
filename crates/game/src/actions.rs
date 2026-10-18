@@ -119,10 +119,10 @@ fn planning_action(
 ) {
     match action {
         UiAction::Buy(i) => {
-            if let Some(id) = report(planning, run.buy(i)) {
-                if planning.selected.is_none() {
-                    planning.selected = Some(id);
-                }
+            if let Some(id) = report(planning, run.buy(i))
+                && planning.selected.is_none()
+            {
+                planning.selected = Some(id);
             }
         }
         UiAction::Reroll => {
@@ -146,11 +146,11 @@ fn planning_action(
         UiAction::ClickCell(p) => move_selected_to(run, planning, Location::Board(p)),
         UiAction::ClickBench(i) => move_selected_to(run, planning, Location::Bench(i)),
         UiAction::Sell => {
-            if let Some(loc) = selected_loc(run, planning) {
-                if report(planning, run.sell(loc)).is_some() {
-                    planning.selected = None;
-                    planning.editor_open = false;
-                }
+            if let Some(loc) = selected_loc(run, planning)
+                && report(planning, run.sell(loc)).is_some()
+            {
+                planning.selected = None;
+                planning.editor_open = false;
             }
         }
         UiAction::OpenEditor => {

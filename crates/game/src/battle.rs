@@ -315,7 +315,7 @@ fn advance(
         return;
     }
     let dt = time.delta_secs() * settings.speed as f32;
-    for (_, (_, left)) in pb.badges.iter_mut() {
+    for (_, left) in pb.badges.values_mut() {
         *left -= dt;
     }
 
@@ -522,10 +522,10 @@ fn animate_units(
             Some((label, left)) if *left > 0.0 => {
                 *vis = Visibility::Inherited;
                 for child in <[Entity]>::iter(children) {
-                    if let Ok(mut t) = badge_text.get_mut(*child) {
-                        if **t != *label {
-                            **t = label.clone();
-                        }
+                    if let Ok(mut t) = badge_text.get_mut(*child)
+                        && **t != *label
+                    {
+                        **t = label.clone();
                     }
                 }
             }
