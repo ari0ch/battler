@@ -24,7 +24,7 @@ The skill lies in planning, and in reading why a plan went wrong.
 
 - **Engine and language:** Rust with Bevy (pinned at 0.20). This is also a Rust learning project.
 - **Architecture:** a pure-Rust `battler-sim` crate with no engine dependencies holds all
-  game rules: the battle, the interpreter, and later the shop and economy. The Bevy
+  game rules: the battle, the interpreter, and the run (shop, pool, economy). The Bevy
   `battler` crate only renders state, takes input, and hosts the editor and replay UI.
 - **Primary target:** the web (WASM, WebGL2), deployed to GitHub Pages on every push to
   `main`, for easy playtest links. Desktop is used for the development loop only.
@@ -46,28 +46,83 @@ The skill lies in planning, and in reading why a plan went wrong.
   The merged unit is the one on the board, so **its program carries over** and gains an
   empty node to fill. If no copy is on the board, the merged unit starts unprogrammed.
 
+### Run structure
+
+- **Single-player first, against AI boards.** AI opponents use the same shop and program
+  rules as the player, drawing on pre-written programs per class, and get stronger each
+  round. Async PvP can come later by swapping AI boards for snapshots of real players.
+- **Player health:** 100 HP. A loss costs **2 + the total level of the enemy units still
+  alive**, so a narrow loss hurts less than a wipe. A draw costs nothing.
+- **The run ends** at 0 HP (defeat) or after winning through round 15 (victory).
+- **Board size grows by round:** 3 units (rounds 1–2), 4 (3–5), 5 (6–9), 6 (10+).
+  Six is also the number of classes, which the one-per-type rule caps anyway.
+- **Battlefield:** 8×5 grid. The player places units in the left four columns; the
+  enemy board occupies the right four.
+
+### Scenes
+
+Main menu → **run loop** (Planning → Battle → Result, repeated each round) → Game over →
+Run summary → Main menu.
+
+- **Main menu:** new run, how to play, settings.
+- **Planning (timed):** shop, bench, board placement, and the card editor.
+  60 seconds, or 75 once the player has 5+ units. A **Ready** button ends it early.
+- **Battle:** watch the fight, at 1×/2×/4× speed or skipped to the end.
+- **Result:** win/loss, HP lost, and a gold breakdown for next round.
+- **Game over:** victory or defeat, rounds survived, then the run summary.
+- **Run summary:** stats per round and a replay of any battle from its seed.
+
+### Shop and bench
+
+- 5 offers per round. **Buy 3 gold**, **reroll 2 gold**, **sell** for the purchase price
+  of the copies inside (3 per copy).
+- **Bench: 4 slots.** Buying a third copy merges immediately, freeing slots.
+- **Shared pool:** about 12 copies of each class, drawn from the run's seeded RNG.
+- **Programs persist between rounds.** Click any unit (board or bench) to edit its cards.
+
 ### Economy
 
-- **TFT-style:** gold per round, a win/loss bonus, and interest on unspent gold.
-  Starting values to tune: 5 base gold per round; +1 interest per 10 banked, up to +5;
-  streak bonuses.
+- Start with **10 gold**.
+- Each round: **5 base**, **+1 for a win**, **interest +1 per 10 gold banked** (max +5),
+  **streak bonus** +1/+2/+3 at 2/4/6 consecutive wins *or* losses.
+
+### Battle readability
+
+The renderer turns each tick's events into short animations over the tick's duration.
+In priority order:
+
+1. **Card fired:** a badge above the acting unit showing the action; a side panel lists
+   every unit's cards with the running one highlighted.
+2. **Health bars, level pips,** and a team-coloured ring under each unit.
+3. **Floating numbers:** damage, larger yellow crits with "!", green heals, "Blocked".
+4. **Smooth movement and attacks:** glide between cells, melee lunges, projectiles.
+5. **Status icons:** shield, frenzy, immunity; taunt draws a line to the Knight.
+6. **Signals** pulse between allies.
 
 ### Analysis
 
 - **Post-game replay** of any battle from the run, for analysis rather than mid-run
   rematches. Cheap to store: the boards, programs and seed, not a recording.
 
+### Presentation tech
+
+- **Bevy states:** `AppState` (Main menu, In run, Game over) with a nested `RunPhase`
+  (Planning, Battle, Result). Entities are scoped to the state that created them and
+  despawned on exit.
+- **Run, shop, pool and economy rules live in `battler-sim`** (a `run` module with its own
+  seeded RNG and tests). The game crate only displays them and sends player commands.
+- **UI uses Bevy's own UI and picking** (drag events included), not `bevy_egui`.
+- **Art later.** Pixel art is the likely direction; until then, clean placeholder shapes
+  and icons.
+
 ## Open questions
 
-1. **Long-term structure:** async PvP (Super Auto Pets style), a single-player roguelike
-   run against AI boards, or both? This affects how the economy is tuned.
-2. **More randomness?** Crits are implemented (see below). Dodges or damage ranges could
+1. **More randomness?** Crits are implemented (see below). Dodges or damage ranges could
    follow if fights feel too predictable.
-3. **How long is a planning phase?** It has to fit shopping and programming. Possibly
-   longer than TFT's, or scaling with the number of units.
-4. **Bench size and board size.** Does the board limit grow with player level, as in TFT?
-5. **Traits/synergies.** Signals are currently open to every unit; they could become a
+2. **Traits/synergies.** Signals are currently open to every unit; they could become a
    trait unlock later.
+3. **AI difficulty curve:** how quickly AI boards gain levels and units.
+4. **Art direction and sourcing** for pixel art.
 
 ## Rules (implemented in `battler-sim`)
 
@@ -159,4 +214,5 @@ Goal: prove the program → watch → analyse loop is fun, then add the shop.
 - **Phase 1:** rule-card programs (done in the sim, all 6 classes), a small grid,
   hand-designed enemy boards, a drag-and-drop editor (`bevy_egui` is the likely quick
   path), and a replay showing which card each unit is running.
-- **Phase 2:** shop, bench, merging, economy, timed rounds, post-game replay.
+- **Phase 2:** the run loop: scenes, shop, bench, merging, economy, timed rounds,
+  battle readability, post-game replay.
