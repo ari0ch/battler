@@ -48,6 +48,35 @@ impl Class {
     pub fn is_ranged(self) -> bool {
         self.base_stats().range > 1
     }
+
+    /// Display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Class::Knight => "Knight",
+            Class::Ranger => "Ranger",
+            Class::Mage => "Mage",
+            Class::Cleric => "Cleric",
+            Class::Rogue => "Rogue",
+            Class::Berserker => "Berserker",
+        }
+    }
+
+    /// Short role description.
+    pub fn role(self) -> &'static str {
+        match self {
+            Class::Knight => "Tank",
+            Class::Ranger => "Ranged damage",
+            Class::Mage => "Area damage",
+            Class::Cleric => "Healer",
+            Class::Rogue => "Assassin",
+            Class::Berserker => "Bruiser",
+        }
+    }
+
+    /// Dense index (0..6), for per-class arrays.
+    pub fn index(self) -> usize {
+        self as usize
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +96,33 @@ pub enum Level {
 }
 
 impl Level {
+    /// 1, 2 or 3.
+    pub fn number(self) -> u32 {
+        match self {
+            Level::One => 1,
+            Level::Two => 2,
+            Level::Three => 3,
+        }
+    }
+
+    /// The level a merge of three of these produces, if any.
+    pub fn next(self) -> Option<Level> {
+        match self {
+            Level::One => Some(Level::Two),
+            Level::Two => Some(Level::Three),
+            Level::Three => None,
+        }
+    }
+
+    /// How many level 1 copies a unit of this level is made of.
+    pub fn copies(self) -> u32 {
+        match self {
+            Level::One => 1,
+            Level::Two => 3,
+            Level::Three => 9,
+        }
+    }
+
     /// How many rule cards (nodes) a unit of this level can hold.
     pub fn max_nodes(self) -> usize {
         match self {

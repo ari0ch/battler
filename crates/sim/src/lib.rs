@@ -19,6 +19,7 @@ mod exec;
 mod grid;
 mod program;
 mod rng;
+pub mod run;
 mod unit;
 
 #[cfg(test)]

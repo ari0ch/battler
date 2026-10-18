@@ -24,6 +24,20 @@ impl Rng {
         z ^ (z >> 31)
     }
 
+    /// A value in `0..n` (`n` must be non-zero).
+    pub fn below(&mut self, n: u32) -> u32 {
+        assert!(n > 0, "Rng::below(0)");
+        (self.next_u64() % u64::from(n)) as u32
+    }
+
+    /// Shuffles a slice in place (Fisher-Yates).
+    pub fn shuffle<T>(&mut self, items: &mut [T]) {
+        for i in (1..items.len()).rev() {
+            let j = self.below(i as u32 + 1) as usize;
+            items.swap(i, j);
+        }
+    }
+
     /// Returns true with roughly `percent`% probability.
     ///
     /// (`% 100` has a negligible bias for a 64-bit source; fine for gameplay.)
