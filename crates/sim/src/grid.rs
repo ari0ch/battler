@@ -36,6 +36,16 @@ impl Pos {
         };
         first.into_iter().chain(second)
     }
+
+    /// The four edge-adjacent cells, in a fixed order (up, left, right, down).
+    pub fn neighbours(self) -> [Pos; 4] {
+        [
+            Pos::new(self.x, self.y - 1),
+            Pos::new(self.x - 1, self.y),
+            Pos::new(self.x + 1, self.y),
+            Pos::new(self.x, self.y + 1),
+        ]
+    }
 }
 
 #[cfg(test)]

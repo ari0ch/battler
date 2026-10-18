@@ -61,40 +61,102 @@ The skill lies in planning, and in reading why a plan went wrong.
 
 1. **Long-term structure:** async PvP (Super Auto Pets style), a single-player roguelike
    run against AI boards, or both? This affects how the economy is tuned.
-2. **Where does randomness appear?** Candidates: miss/dodge chances, damage ranges,
-   crits. Keep it small enough that close fights can swing, but a clearly better program
-   still wins.
+2. **More randomness?** Crits are implemented (see below). Dodges or damage ranges could
+   follow if fights feel too predictable.
 3. **How long is a planning phase?** It has to fit shopping and programming. Possibly
    longer than TFT's, or scaling with the number of units.
 4. **Bench size and board size.** Does the board limit grow with player level, as in TFT?
+5. **Traits/synergies.** Signals are currently open to every unit; they could become a
+   trait unlock later.
 
-## Instruction language (sketch)
+## Rules (implemented in `battler-sim`)
 
-The current sim has a placeholder set (`Wait`, `Advance`, `Attack`, `Guard`) as a looping
-sequence. It will be replaced by rule cards. Ideas for blocks:
+- **Evaluation:** each tick, units act in id order. A unit checks its cards top to bottom
+  and runs the first whose condition holds **and** whose action can be carried out. If the
+  action can't run (no target in range, ability on cooldown, ally already at full HP...),
+  it **falls through** to the next card.
+- **Locked final rule:** if no card fires, the unit attacks the nearest enemy, advancing
+  toward it when out of range. It is not one of the unit's nodes and can't be removed, so
+  units never stand idle.
+- **Targeting:** actions with a target have a dropdown: nearest, lowest HP, highest HP,
+  strongest, ranged. Ties break by distance, then unit id. Targeting the lowest-HP
+  **enemy** is Ranger-only; for allies, "lowest HP" means most hurt by percentage.
+- **Taunt overrides targeting:** a taunted unit targets its taunter with every
+  enemy-targeted action, whatever its dropdown says.
+- **Cooldowns:** each signature ability has its own cooldown. Abilities start ready.
+- **Signals:** sent on one tick, visible to the whole team on the next tick only.
+- **Defences:** Guard and Shield Wall halve damage (rounding up; they don't stack).
+  Sanctuary blocks all damage.
+- **Crits:** each hit has a 15% chance to deal 150% damage, from the battle's seeded RNG.
+  Crit chance can be set to 0 per battle (useful for tests, or a no-luck mode).
+- **Levels:** HP and attack scale ×1.8 per level (100% / 180% / 324%); range doesn't.
 
-- **Conditions:** `enemy adjacent`, `hp below X%`, `ally hurt`, `outnumbered`,
-  `signal received`.
-- **Actions:** `ADVANCE`, `ATTACK`, `GUARD`, `RETREAT`, plus unit-specific ones.
-- **Blocks come from units:** each unit type contributes its own blocks (a Knight brings
-  `TAUNT`, a Mage brings `FIREBALL`), alongside a shared basic set. Traits/synergies could
-  unlock team-wide blocks such as `SEND SIGNAL`, which is where coordination between
-  units comes from. Buying a unit chooses vocabulary as well as stats.
+## Classes
 
-Example (a level 3 Knight with 4 nodes):
+| Class | HP | Attack | Range | Signature blocks |
+|---|---|---|---|---|
+| Knight | 600 | 40 | 1 | Taunt, Shield Wall |
+| Ranger | 350 | 55 | 3 | Aimed Shot, Kite |
+| Mage | 350 | 45 | 3 | Fireball, Blink |
+| Cleric | 400 | 25 | 2 | Heal, Sanctuary |
+| Rogue | 400 | 60 | 1 | Backstab, Shadowstep |
+| Berserker | 550 | 50 | 1 | Frenzy, Cleave |
+
+(Level 1 stats. All numbers are first guesses for tuning.)
+
+## Block reference
+
+**Conditions** (shared): always · enemy adjacent · enemy in range · my HP below 25/50/75% ·
+ally HP below 25/50/75% · outnumbered (more enemies than allies within 2 cells) ·
+ability ready · every N ticks (1–9) · signal received (red/blue).
+
+**Shared actions:**
+
+| Action | Effect | Can't run when |
+|---|---|---|
+| Advance ▾ | step toward target | target already in range, or blocked |
+| Attack ▾ | basic attack | target out of range |
+| Guard | half damage until my next turn | never |
+| Retreat | step away from the nearest enemy | nowhere further to go |
+| Hold | do nothing on purpose | never |
+| Protect Ally ▾ | move next to an ally | already adjacent, or blocked |
+| Send Signal | red or blue, seen by the team next tick | never |
+
+**Signature actions:**
+
+| Action | Effect | Cooldown |
+|---|---|---|
+| Taunt | enemies within 2 cells must target me for 3 ticks | 6 |
+| Shield Wall | me and adjacent allies take half damage for 2 ticks | 6 |
+| Aimed Shot ▾ | 2× damage, range +1 | 4 |
+| Kite ▾ | attack, then step away from the nearest enemy | 2 |
+| Fireball ▾ | hits target, plus half damage to enemies next to it | 5 |
+| Blink | teleport up to 3 cells to the spot furthest from enemies | 6 |
+| Heal ▾ | restore 4× attack HP to an ally in range +1 | 3 |
+| Sanctuary ▾ | ally in range +1 is immune to damage for 2 ticks | 8 |
+| Backstab ▾ | 3× damage on an adjacent enemy that's next to one of my allies | 4 |
+| Shadowstep ▾ | teleport next to an enemy within 4 cells, on its far side | 5 |
+| Frenzy | for 4 ticks, basic attacks strike twice | 8 |
+| Cleave | hit every adjacent enemy | 3 |
+
+▾ = has a target dropdown. Frenzy is simplified from "attack faster as HP drops" to a
+timed double strike; it pairs naturally with an `my HP below` condition.
+
+Example (a level 3 Knight with 4 nodes, plus the locked final rule):
 
 ```
-1: [hp < 30%?]         → [GUARD]
-2: [ally hurt?]        → [TAUNT]
-3: [enemy adjacent?]   → [ATTACK]
-4: [always]            → [ADVANCE]
+1: [my HP below 25%?]   → [GUARD]
+2: [ally HP below 50%?] → [SHIELD WALL]
+3: [enemy adjacent?]    → [TAUNT]
+4: [always]             → [PROTECT ALLY ▾ lowest HP]
+🔒 attack nearest (advance if out of range)
 ```
 
 ## Prototype scope
 
 Goal: prove the program → watch → analyse loop is fun, then add the shop.
 
-- **Phase 1:** rule-card programs, 3–4 unit types, around 8 blocks, a small grid,
+- **Phase 1:** rule-card programs (done in the sim, all 6 classes), a small grid,
   hand-designed enemy boards, a drag-and-drop editor (`bevy_egui` is the likely quick
   path), and a replay showing which card each unit is running.
 - **Phase 2:** shop, bench, merging, economy, timed rounds, post-game replay.

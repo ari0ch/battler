@@ -1,20 +1,24 @@
-//! Battler client. For now this just plays a demo battle from `battler-sim`
-//! on a loop, to prove the sim -> render pipeline and the web deploy.
+//! Battler client. For now this plays a demo battle from `battler-sim` on a
+//! loop, using every class and real rule-card programs. Each restart uses a
+//! new seed, so crits can change how the fight goes.
 
-use battler_sim::{Battle, Instruction::*, Outcome, Pos, Program, Team, UnitId, UnitStats};
+use battler_sim::{
+    Action::*, Battle, Class, Condition::*, Level, Node, Outcome, Pos, Program, Target, Team,
+    Threshold, UnitId, UnitSpec,
+};
 use bevy::prelude::*;
 
 /// Size of one grid cell in world units (pixels at 1x zoom).
 const CELL: f32 = 64.0;
 /// Real seconds per simulation tick.
-const TICK_SECONDS: f32 = 0.35;
+const TICK_SECONDS: f32 = 0.4;
 /// Ticks to linger on the result before restarting the demo.
 const RESTART_DELAY_TICKS: u32 = 6;
 
 const BACKGROUND: Color = Color::srgb(0.08, 0.07, 0.10);
 const TILE: Color = Color::srgb(0.16, 0.15, 0.20);
-const PLAYER: Color = Color::srgb(0.35, 0.62, 0.95);
-const ENEMY: Color = Color::srgb(0.90, 0.36, 0.30);
+const PLAYER: Color = Color::srgb(0.30, 0.55, 0.92);
+const ENEMY: Color = Color::srgb(0.88, 0.34, 0.28);
 
 fn main() {
     App::new()
@@ -30,7 +34,7 @@ fn main() {
             }),
             ..default()
         }))
-        .insert_resource(Sim::new())
+        .insert_resource(Sim::new(1))
         .insert_resource(SimClock(Timer::from_seconds(TICK_SECONDS, TimerMode::Repeating)))
         .add_systems(Startup, setup)
         .add_systems(Update, (advance_sim, sync_units, update_status).chain())
@@ -39,13 +43,14 @@ fn main() {
 
 #[derive(Resource)]
 struct Sim {
+    seed: u64,
     battle: Battle,
     ticks_since_end: u32,
 }
 
 impl Sim {
-    fn new() -> Self {
-        Self { battle: demo_battle(), ticks_since_end: 0 }
+    fn new(seed: u64) -> Self {
+        Self { seed, battle: demo_battle(seed), ticks_since_end: 0 }
     }
 }
 
@@ -59,16 +64,87 @@ struct UnitSprite(UnitId);
 #[derive(Component)]
 struct StatusText;
 
-fn demo_battle() -> Battle {
-    let knight = UnitStats { max_hp: 10, attack: 3 };
-    let goblin = UnitStats { max_hp: 6, attack: 2 };
-    let mut b = Battle::new(8, 4, 200);
-    b.spawn(Team::Player, Pos::new(0, 1), knight, Program::new([Advance, Attack]));
-    b.spawn(Team::Player, Pos::new(0, 2), knight, Program::new([Advance, Guard, Attack]));
-    b.spawn(Team::Enemy, Pos::new(7, 0), goblin, Program::new([Advance, Attack]));
-    b.spawn(Team::Enemy, Pos::new(7, 1), goblin, Program::new([Advance, Attack]));
-    b.spawn(Team::Enemy, Pos::new(7, 3), goblin, Program::new([Advance, Attack, Attack]));
+fn demo_battle(seed: u64) -> Battle {
+    let card = Node::new;
+    let mut b = Battle::new(8, 5, 200, seed);
+    let mut add = |team, x, y, class, level, nodes: Vec<Node>| {
+        let spec = UnitSpec::new(class, level, Program::new(nodes));
+        b.spawn(team, Pos::new(x, y), spec).expect("demo units are valid");
+    };
+
+    // Knights, Ranger and Cleric: hold the line and focus the weakest enemy.
+    add(
+        Team::Player,
+        1,
+        2,
+        Class::Knight,
+        Level::Two,
+        vec![card(EnemyAdjacent, Taunt), card(AllyHpBelow(Threshold::P50), ShieldWall)],
+    );
+    add(
+        Team::Player,
+        0,
+        1,
+        Class::Ranger,
+        Level::Two,
+        vec![
+            card(EnemyAdjacent, Kite(Target::Nearest)),
+            card(EnemyInRange, AimedShot(Target::LowestHp)),
+            card(EnemyInRange, Attack(Target::LowestHp)),
+        ],
+    );
+    add(
+        Team::Player,
+        0,
+        3,
+        Class::Cleric,
+        Level::One,
+        vec![
+            card(AllyHpBelow(Threshold::P75), Heal(Target::LowestHp)),
+            card(MyHpBelow(Threshold::P50), Sanctuary(Target::Nearest)),
+        ],
+    );
+
+    // Berserker, Mage and Rogue: dive the backline.
+    add(
+        Team::Enemy,
+        6,
+        2,
+        Class::Berserker,
+        Level::Three,
+        vec![card(EnemyAdjacent, Frenzy), card(Outnumbered, Guard), card(EnemyAdjacent, Cleave)],
+    );
+    add(
+        Team::Enemy,
+        7,
+        1,
+        Class::Mage,
+        Level::Two,
+        vec![card(EnemyAdjacent, Blink), card(EnemyInRange, Fireball(Target::Nearest))],
+    );
+    add(
+        Team::Enemy,
+        7,
+        4,
+        Class::Rogue,
+        Level::Two,
+        vec![
+            card(Always, Shadowstep(Target::Ranged)),
+            card(EnemyAdjacent, Backstab(Target::Nearest)),
+        ],
+    );
     b
+}
+
+fn class_letter(class: Class) -> &'static str {
+    match class {
+        Class::Knight => "K",
+        Class::Ranger => "R",
+        Class::Mage => "M",
+        Class::Cleric => "C",
+        Class::Rogue => "Ro",
+        Class::Berserker => "B",
+    }
 }
 
 /// Converts a grid cell to a world position, centring the grid on the origin.
@@ -96,11 +172,16 @@ fn setup(mut commands: Commands, sim: Res<Sim>) {
             Team::Player => PLAYER,
             Team::Enemy => ENEMY,
         };
-        commands.spawn((
-            UnitSprite(unit.id),
-            Sprite::from_color(color, Vec2::splat(CELL * 0.7)),
-            Transform::from_translation(cell_to_world(unit.pos, battle, 1.0)),
-        ));
+        commands
+            .spawn((
+                UnitSprite(unit.id),
+                Sprite::from_color(color, Vec2::splat(CELL * 0.7)),
+                Transform::from_translation(cell_to_world(unit.pos, battle, 1.0)),
+            ))
+            .with_child((
+                Text2d::new(class_letter(unit.class)),
+                Transform::from_xyz(0.0, 0.0, 1.0),
+            ));
     }
 
     let top = (battle.height() as f32 / 2.0 + 1.0) * CELL;
@@ -116,7 +197,8 @@ fn advance_sim(time: Res<Time>, mut clock: ResMut<SimClock>, mut sim: ResMut<Sim
     } else {
         sim.ticks_since_end += 1;
         if sim.ticks_since_end >= RESTART_DELAY_TICKS {
-            *sim = Sim::new();
+            let next_seed = sim.seed + 1;
+            *sim = Sim::new(next_seed);
         }
     }
 }
@@ -138,10 +220,10 @@ fn sync_units(sim: Res<Sim>, mut sprites: Query<(&UnitSprite, &mut Transform, &m
 
 fn update_status(sim: Res<Sim>, mut status: Single<&mut Text2d, With<StatusText>>) {
     let result = match sim.battle.outcome() {
-        Outcome::Ongoing => "fighting".to_string(),
-        Outcome::Won(Team::Player) => "knights win".to_string(),
-        Outcome::Won(Team::Enemy) => "goblins win".to_string(),
-        Outcome::Draw => "draw".to_string(),
+        Outcome::Ongoing => "fighting",
+        Outcome::Won(Team::Player) => "blue wins",
+        Outcome::Won(Team::Enemy) => "red wins",
+        Outcome::Draw => "draw",
     };
-    status.0 = format!("Tick {}  ·  {}", sim.battle.tick(), result);
+    status.0 = format!("Seed {}  ·  Tick {}  ·  {}", sim.seed, sim.battle.tick(), result);
 }

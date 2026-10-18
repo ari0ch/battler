@@ -1,13 +1,70 @@
-use crate::{Instruction, Pos, Program, Team, Unit, UnitId, UnitStats};
+use std::fmt;
+
+use crate::program::ProgramError;
+use crate::{Ability, CardRef, Pos, Rng, Signal, Statuses, Team, Unit, UnitId, UnitSpec};
+
+/// Chance (in percent) that any single hit is a critical strike.
+pub const CRIT_CHANCE_PERCENT: u32 = 15;
+/// Critical strikes deal this percentage of normal damage.
+pub const CRIT_DAMAGE_PERCENT: u32 = 150;
 
 /// Something that happened during a tick. The full event log doubles as the
 /// replay: the renderer and the replay timeline only ever read events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    Moved { unit: UnitId, from: Pos, to: Pos },
-    Attacked { attacker: UnitId, target: UnitId, damage: u32 },
-    Guarded { unit: UnitId },
-    Died { unit: UnitId },
+    /// Which card a unit ran this tick. Always precedes that card's effects.
+    CardFired {
+        unit: UnitId,
+        card: CardRef,
+    },
+    Moved {
+        unit: UnitId,
+        from: Pos,
+        to: Pos,
+    },
+    Teleported {
+        unit: UnitId,
+        from: Pos,
+        to: Pos,
+    },
+    Attacked {
+        attacker: UnitId,
+        target: UnitId,
+        damage: u32,
+        crit: bool,
+    },
+    Healed {
+        healer: UnitId,
+        target: UnitId,
+        amount: u32,
+    },
+    Guarded {
+        unit: UnitId,
+    },
+    StatusApplied {
+        unit: UnitId,
+        status: StatusKind,
+        until: u32,
+    },
+    SignalSent {
+        unit: UnitId,
+        signal: Signal,
+    },
+    AbilityUsed {
+        unit: UnitId,
+        ability: Ability,
+    },
+    Died {
+        unit: UnitId,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusKind {
+    Shielded,
+    Immune,
+    Frenzied,
+    Taunted { by: UnitId },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,21 +75,63 @@ pub enum Outcome {
     Draw,
 }
 
+/// Why a unit couldn't be added to a battle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpawnError {
+    OutOfBounds(Pos),
+    Occupied(Pos),
+    InvalidProgram(ProgramError),
+}
+
+impl fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SpawnError::OutOfBounds(p) => write!(f, "position ({}, {}) is off the grid", p.x, p.y),
+            SpawnError::Occupied(p) => write!(f, "position ({}, {}) is already taken", p.x, p.y),
+            SpawnError::InvalidProgram(e) => write!(f, "invalid program: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for SpawnError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            SpawnError::InvalidProgram(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+// `From` lets `?` convert a `ProgramError` into a `SpawnError` automatically.
+impl From<ProgramError> for SpawnError {
+    fn from(e: ProgramError) -> Self {
+        SpawnError::InvalidProgram(e)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Battle {
-    width: i32,
-    height: i32,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
     max_ticks: u32,
-    tick: u32,
+    pub(crate) tick: u32,
     next_id: u32,
     /// Kept in ascending id order; dead units stay so ids remain valid.
-    units: Vec<Unit>,
+    pub(crate) units: Vec<Unit>,
     log: Vec<(u32, Event)>,
     outcome: Outcome,
+    pub(crate) rng: Rng,
+    pub(crate) crit_chance: u32,
+    /// Signals sent this tick, per team (bit set), delivered next tick.
+    pub(crate) signals_pending: [u8; 2],
+    /// Signals teammates can see this tick.
+    pub(crate) signals_active: [u8; 2],
 }
 
 impl Battle {
-    pub fn new(width: i32, height: i32, max_ticks: u32) -> Self {
+    /// Creates an empty battle. The `seed` drives all randomness (crits), so the
+    /// same units, programs and seed always replay identically.
+    pub fn new(width: i32, height: i32, max_ticks: u32, seed: u64) -> Self {
         Self {
             width,
             height,
@@ -42,29 +141,46 @@ impl Battle {
             units: Vec::new(),
             log: Vec::new(),
             outcome: Outcome::Ongoing,
+            rng: Rng::new(seed),
+            crit_chance: CRIT_CHANCE_PERCENT,
+            signals_pending: [0; 2],
+            signals_active: [0; 2],
         }
     }
 
-    /// Adds a unit before the battle starts. Returns its id.
-    ///
-    /// # Panics
-    /// If the cell is out of bounds or already occupied.
-    pub fn spawn(&mut self, team: Team, pos: Pos, stats: UnitStats, program: Program) -> UnitId {
-        assert!(self.in_bounds(pos), "spawn position {pos:?} is out of bounds");
-        assert!(!self.is_occupied(pos), "spawn position {pos:?} is occupied");
+    /// Adds a unit before the battle starts, after checking its program is
+    /// legal for its class and level.
+    pub fn spawn(&mut self, team: Team, pos: Pos, spec: UnitSpec) -> Result<UnitId, SpawnError> {
+        if !self.in_bounds(pos) {
+            return Err(SpawnError::OutOfBounds(pos));
+        }
+        if self.is_occupied(pos) {
+            return Err(SpawnError::Occupied(pos));
+        }
+        spec.program.validate(spec.class, spec.level)?;
+
+        let stats = spec.level.scale(spec.class.base_stats());
         let id = UnitId(self.next_id);
         self.next_id += 1;
         self.units.push(Unit {
             id,
             team,
-            pos,
+            class: spec.class,
+            level: spec.level,
             stats,
+            pos,
             hp: stats.max_hp,
-            program,
-            pc: 0,
-            guarding: false,
+            program: spec.program,
+            statuses: Statuses::default(),
+            ready_at: [0; Ability::COUNT],
         });
-        id
+        Ok(id)
+    }
+
+    /// Overrides the crit chance (default [`CRIT_CHANCE_PERCENT`]). Setting it
+    /// to 0 removes all randomness from the battle.
+    pub fn set_crit_chance(&mut self, percent: u32) {
+        self.crit_chance = percent.min(100);
     }
 
     pub fn width(&self) -> i32 {
@@ -103,21 +219,19 @@ impl Battle {
             return Vec::new();
         }
         self.tick += 1;
-        let mut events = Vec::new();
+        // Signals sent last tick become visible now.
+        self.signals_active = std::mem::take(&mut self.signals_pending);
 
+        let mut events = Vec::new();
         for i in 0..self.units.len() {
-            if !self.units[i].is_alive() {
-                continue;
+            if self.units[i].is_alive() {
+                self.take_turn(i, &mut events);
             }
-            let unit = &mut self.units[i];
-            unit.guarding = false;
-            let instruction = unit.program.fetch(unit.pc);
-            unit.pc = (unit.pc + 1) % unit.program.len().max(1);
-            self.execute(i, instruction, &mut events);
         }
 
         self.outcome = self.evaluate_outcome();
-        self.log.extend(events.iter().cloned().map(|e| (self.tick, e)));
+        let tick = self.tick;
+        self.log.extend(events.iter().cloned().map(|e| (tick, e)));
         events
     }
 
@@ -129,77 +243,16 @@ impl Battle {
         self.outcome
     }
 
-    fn execute(&mut self, i: usize, instruction: Instruction, events: &mut Vec<Event>) {
-        match instruction {
-            Instruction::Wait => {}
-            Instruction::Advance => self.advance(i, events),
-            Instruction::Attack => self.attack(i, events),
-            Instruction::Guard => {
-                self.units[i].guarding = true;
-                events.push(Event::Guarded { unit: self.units[i].id });
-            }
-        }
-    }
-
-    fn advance(&mut self, i: usize, events: &mut Vec<Event>) {
-        let Some(target) = self.nearest_enemy(i) else { return };
-        let from = self.units[i].pos;
-        let target_pos = self.units[target].pos;
-        if from.is_adjacent(target_pos) {
-            return;
-        }
-        let step =
-            from.steps_toward(target_pos).find(|&p| self.in_bounds(p) && !self.is_occupied(p));
-        if let Some(to) = step {
-            self.units[i].pos = to;
-            events.push(Event::Moved { unit: self.units[i].id, from, to });
-        }
-    }
-
-    fn attack(&mut self, i: usize, events: &mut Vec<Event>) {
-        let attacker = &self.units[i];
-        let target = self
-            .units
-            .iter()
-            .enumerate()
-            .filter(|(_, u)| {
-                u.is_alive() && u.team != attacker.team && u.pos.is_adjacent(attacker.pos)
-            })
-            .min_by_key(|(_, u)| u.id)
-            .map(|(j, _)| j);
-        let Some(j) = target else { return };
-
-        let base = self.units[i].stats.attack;
-        let damage = if self.units[j].guarding { base.div_ceil(2) } else { base };
-        let defender = &mut self.units[j];
-        defender.hp = defender.hp.saturating_sub(damage);
-        events.push(Event::Attacked {
-            attacker: self.units[i].id,
-            target: self.units[j].id,
-            damage,
-        });
-        if !self.units[j].is_alive() {
-            events.push(Event::Died { unit: self.units[j].id });
-        }
-    }
-
-    /// Index of the closest living enemy; ties go to the lowest id.
-    fn nearest_enemy(&self, i: usize) -> Option<usize> {
-        let me = &self.units[i];
-        self.units
-            .iter()
-            .enumerate()
-            .filter(|(_, u)| u.is_alive() && u.team != me.team)
-            .min_by_key(|(_, u)| (u.pos.distance(me.pos), u.id))
-            .map(|(j, _)| j)
-    }
-
-    fn in_bounds(&self, p: Pos) -> bool {
+    pub(crate) fn in_bounds(&self, p: Pos) -> bool {
         (0..self.width).contains(&p.x) && (0..self.height).contains(&p.y)
     }
 
-    fn is_occupied(&self, p: Pos) -> bool {
+    pub(crate) fn is_occupied(&self, p: Pos) -> bool {
         self.units.iter().any(|u| u.is_alive() && u.pos == p)
+    }
+
+    pub(crate) fn is_free(&self, p: Pos) -> bool {
+        self.in_bounds(p) && !self.is_occupied(p)
     }
 
     fn evaluate_outcome(&self) -> Outcome {
@@ -211,68 +264,5 @@ impl Battle {
             (false, true) => Outcome::Won(Team::Enemy),
             (false, false) => Outcome::Draw,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use Instruction::*;
-
-    const KNIGHT: UnitStats = UnitStats { max_hp: 10, attack: 3 };
-    const GOBLIN: UnitStats = UnitStats { max_hp: 6, attack: 2 };
-
-    fn skirmish() -> Battle {
-        let mut b = Battle::new(8, 4, 200);
-        b.spawn(Team::Player, Pos::new(0, 1), KNIGHT, Program::new([Advance, Attack]));
-        b.spawn(Team::Player, Pos::new(0, 2), KNIGHT, Program::new([Advance, Guard]));
-        b.spawn(Team::Enemy, Pos::new(7, 1), GOBLIN, Program::new([Advance, Attack]));
-        b.spawn(Team::Enemy, Pos::new(7, 2), GOBLIN, Program::new([Advance, Attack, Attack]));
-        b
-    }
-
-    #[test]
-    fn identical_battles_produce_identical_logs() {
-        let mut a = skirmish();
-        let mut b = skirmish();
-        assert_eq!(a.run_to_end(), b.run_to_end());
-        assert_eq!(a.log(), b.log());
-        assert!(!a.log().is_empty());
-    }
-
-    #[test]
-    fn knight_beats_goblin_one_on_one() {
-        let mut b = Battle::new(6, 1, 100);
-        b.spawn(Team::Player, Pos::new(0, 0), KNIGHT, Program::new([Advance, Attack]));
-        b.spawn(Team::Enemy, Pos::new(5, 0), GOBLIN, Program::new([Advance, Attack]));
-        assert_eq!(b.run_to_end(), Outcome::Won(Team::Player));
-    }
-
-    #[test]
-    fn guarding_halves_damage_rounding_up() {
-        let mut b = Battle::new(2, 1, 10);
-        let target = b.spawn(Team::Player, Pos::new(0, 0), KNIGHT, Program::new([Guard]));
-        b.spawn(Team::Enemy, Pos::new(1, 0), GOBLIN, Program::new([Attack]));
-        let events = b.step();
-        assert!(events.contains(&Event::Attacked { attacker: UnitId(1), target, damage: 1 }));
-    }
-
-    #[test]
-    fn units_do_not_walk_through_each_other() {
-        let mut b = Battle::new(3, 1, 10);
-        b.spawn(Team::Player, Pos::new(0, 0), KNIGHT, Program::new([Advance]));
-        b.spawn(Team::Player, Pos::new(1, 0), KNIGHT, Program::new([Wait]));
-        b.spawn(Team::Enemy, Pos::new(2, 0), GOBLIN, Program::new([Wait]));
-        let events = b.step();
-        assert!(events.iter().all(|e| !matches!(e, Event::Moved { .. })));
-    }
-
-    #[test]
-    fn stalemate_ends_in_a_draw_at_the_tick_limit() {
-        let mut b = Battle::new(4, 1, 5);
-        b.spawn(Team::Player, Pos::new(0, 0), KNIGHT, Program::new([Wait]));
-        b.spawn(Team::Enemy, Pos::new(3, 0), GOBLIN, Program::new([Wait]));
-        assert_eq!(b.run_to_end(), Outcome::Draw);
-        assert_eq!(b.tick(), 5);
     }
 }

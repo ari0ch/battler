@@ -1,21 +1,36 @@
-//! Deterministic battle simulation for Battler.
+//! Battle simulation for Battler.
 //!
 //! The simulation advances in discrete ticks. Each tick, every living unit
-//! (in ascending [`UnitId`] order) executes one instruction from its
-//! [`Program`]. Programs loop when they reach the end.
+//! (in ascending [`UnitId`] order) takes one turn: it checks its rule cards
+//! top to bottom and runs the first one whose condition holds and whose action
+//! can be carried out. If none fires, the locked default rule runs: attack the
+//! nearest enemy, advancing toward it if it's out of range.
 //!
-//! Rules for keeping it deterministic:
+//! Battles are **reproducible**: randomness (crits) comes from a seeded [`Rng`]
+//! stored in the [`Battle`], so the same units, programs and seed always play
+//! out identically. Rules for keeping it that way:
 //! - No floats in game logic; positions and stats are integers.
 //! - No hash-ordered collections; iterate in a stable order.
-//! - No wall-clock time or OS randomness; time is the tick counter, and any
-//!   randomness must come from a seeded RNG stored in the battle.
+//! - No wall-clock time or OS randomness; time is the tick counter.
 
 mod battle;
+mod class;
+mod exec;
 mod grid;
 mod program;
+mod rng;
 mod unit;
 
-pub use battle::{Battle, Event, Outcome};
+#[cfg(test)]
+mod tests;
+
+pub use battle::{
+    Battle, CRIT_CHANCE_PERCENT, CRIT_DAMAGE_PERCENT, Event, Outcome, SpawnError, StatusKind,
+};
+pub use class::{Ability, Class, Level, Stats};
 pub use grid::Pos;
-pub use program::{Instruction, Program};
-pub use unit::{Team, Unit, UnitId, UnitStats};
+pub use program::{
+    Action, CardRef, Condition, Node, Program, ProgramError, Signal, Target, Threshold,
+};
+pub use rng::Rng;
+pub use unit::{Statuses, Team, Unit, UnitId, UnitSpec};
