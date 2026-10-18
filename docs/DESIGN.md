@@ -25,15 +25,26 @@ The skill lies in planning, and in debugging your plan after it goes wrong.
   and hosts the editor and replay UI.
 - **Primary target:** the web (WASM, WebGL2), deployed to GitHub Pages on every push to
   `main`, for easy playtest links. Desktop is used for the development loop only.
+- **Editor:** Scratch-style drag-and-drop blocks ("nodes") attached to each unit.
+- **Program size grows with unit level:** level 1 has 2 nodes, level 2 has 3, level 3 has 4.
+- **Levelling:** the classic autobattler merge. Three copies of a level 1 unit combine into
+  one level 2; three level 2 copies combine into one level 3 (9 copies in total).
+- **Economy:** TFT-style. Gold per round, a win/loss bonus, and interest on unspent gold.
 
 ## Open questions
 
 1. **When does programming happen?** Leaning towards *before* the battle (write, watch,
    debug, rerun), possibly with one live "interrupt" per battle.
-2. **What does the editor look like?** Text-like lines (`IF ally.hp < 30% → TAUNT`), or
-   chunky visual instruction tiles in the style of Opus Magnum?
-3. **Long-term structure:** async PvP (Super Auto Pets style), a single-player roguelike
-   run, or hand-designed puzzle encounters?
+2. **Long-term structure:** async PvP (Super Auto Pets style), a single-player roguelike
+   run, or hand-designed puzzle encounters? The economy assumes repeated rounds against
+   opponents, so this affects how the gold numbers are tuned.
+3. **What happens to programs on a merge?** Keep the program of the highest-level or
+   most-filled copy, let the player choose, or carry over the program of the copy already
+   on the board? Each option makes the new, larger program start differently.
+4. **What does one node hold?** Proposal: a node is a rule card, an optional condition plus
+   one action (`IF enemy adjacent → ATTACK`). Conditions don't cost a separate node.
+5. **Planning time:** TFT's short shop timer conflicts with careful programming. Untimed
+   rounds, or a longer planning phase?
 
 ## Instruction language (sketch)
 
@@ -45,8 +56,11 @@ loop when they reach the end. Ideas for the real language:
 - **Signals between units:** `SEND <colour>` and `WAIT <colour>`, so units can coordinate
   across separate programs. This is likely the main source of puzzle depth.
 - **One register per unit,** for counting, toggling, or remembering a target.
-- **Scarce lines:** around 4–6 per unit. Extra lines and new instruction runes could be
-  bought in the shop, which ties the economy to the programming layer.
+- **Scarce nodes:** 2–4 per unit, set by level (see Decided).
+- **Blocks come from units:** each unit type contributes its own blocks (a Knight brings
+  `TAUNT`, a Mage brings `FIREBALL`), plus a shared basic set. Traits/synergies could
+  unlock team-wide blocks such as signals. This makes buying a unit a choice of vocabulary
+  as well as stats.
 
 Example:
 
@@ -65,4 +79,6 @@ Goal: prove the program → watch → debug loop is fun, before building any eco
 - Hand-designed enemy encounters (puzzle mode).
 - A program editor (`bevy_egui` is the likely quick path).
 - A replay with a scrubbable timeline, showing the line each unit is running.
-- No shop or meta-progression yet.
+- A "rematch" button: rerun the last fight against the same enemy board with an edited
+  program (cheap, because battles are deterministic).
+- **Phase 2:** the shop, merging and economy, once the programming loop is fun.
