@@ -127,6 +127,23 @@ In priority order:
 - **Art later.** Pixel art is the likely direction; until then, clean placeholder shapes
   and icons.
 
+## Playtest notes
+
+- **Loss damage may be too low for 100 HP (Oct 2026, bot test).** A naive bot (buys
+  anything, places by role, uses the AI's own programs) wins only ~3 of 15 battles yet
+  reaches victory in 46% of runs, because ~12 losses at 2 + survivor levels don't add up to
+  100 HP. Adding round-based damage, as TFT does with stage damage, makes losses matter:
+
+  | Loss damage formula | Bot victories (200 runs) | Avg. final round |
+  |---|---|---|
+  | 2 + surviving enemy levels (current) | 46% | 14.7 |
+  | 2 + round/2 + surviving enemy levels | 1.5% | 12.9 |
+  | round + surviving enemy levels | 1% | 12.1 |
+
+  Not changed yet: the current formula is the agreed starting point. Revisit after playing.
+- **Turn order:** player units are spawned first, so they act first each tick. A small
+  first-mover advantage; consider interleaving if it shows up in testing.
+
 ## Open questions
 
 1. **More randomness?** Crits are implemented (see below). Dodges or damage ranges could
@@ -226,5 +243,7 @@ Goal: prove the program → watch → analyse loop is fun, then add the shop.
 - **Phase 1:** rule-card programs (done in the sim, all 6 classes), a small grid,
   hand-designed enemy boards, a drag-and-drop editor (`bevy_egui` is the likely quick
   path), and a replay showing which card each unit is running.
-- **Phase 2:** the run loop: scenes, shop, bench, merging, economy, timed rounds,
-  battle readability, post-game replay.
+- **Phase 2 (first playable, in progress):** the run loop with all scenes, shop, bench,
+  merging, economy, timed rounds, the card editor drawer, battle readability (badges,
+  floating numbers, status letters, optional card trace) and post-game replays.
+  Not yet: projectile/taunt lines, signal pulses, sound, art.

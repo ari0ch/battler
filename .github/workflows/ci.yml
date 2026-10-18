@@ -29,4 +29,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libudev-dev libwayland-dev libxkbcommon-dev
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -p battler --all-targets -- -D warnings
+      # On failure, compiler messages are also published as annotations, which are
+      # readable through the GitHub API even where raw logs aren't.
+      - name: Clippy
+        run: |
+          if ! cargo clippy -p battler --all-targets --message-format=short -- -D warnings 2> clippy.txt; then
+            cat clippy.txt
+            msgs=$(grep -E '^[^ ]+:[0-9]+:[0-9]+: ' clippy.txt | head -200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=clippy::${msgs}"
+            exit 1
+          fi

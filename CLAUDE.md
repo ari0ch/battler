@@ -12,6 +12,8 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   **No dependencies.** Keep it that way unless there's a strong reason, and discuss first.
 - `crates/game`: `battler`, the Bevy 0.20 client. Rendering, input, editor, replay.
   It reads sim state; game rules never live here.
+- `crates/sim/src/run/`: the run (shop, pool, bench, board, merges, economy, AI boards,
+  per-round `BattleSetup` history for replays). Tuning numbers live in `run/economy.rs`.
 - `.github/workflows/ci.yml`: fmt, clippy (`-D warnings`) and tests on every push.
 - `.github/workflows/deploy.yml`: trunk WASM build, deployed to GitHub Pages on `main`.
   The live build is at https://ari0ch.github.io/battler/
@@ -32,6 +34,25 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 - `cargo dev`: run the game natively with dynamic linking (alias in `.cargo/config.toml`).
 - `cd crates/game && trunk serve`: run the web build locally.
 - `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` before committing.
+
+## Game crate architecture
+
+- `state.rs`: `AppState` (MainMenu, InRun, GameOver, Replay) with the `RunPhase` sub-state
+  (Planning, Battle, Result), plus shared resources. Screens spawn with
+  `DespawnOnExit(..)` so they clean up on state change.
+- `ui.rs`: everything is Bevy UI on a fixed 1280x720 stage scaled with `UiScale`.
+  Clickables are headless `bevy::ui_widgets::Button`s tagged `Clickable(UiAction)`; one
+  global `Activate` observer queues actions. Drag and drop: `DragSource` / `DropTarget`
+  plus picking observers. **Import `bevy::ui_widgets::Button` explicitly**: the prelude's
+  `Button` and `Interaction` are deprecated in 0.20 and fail clippy.
+- `actions.rs`: the only place UI input changes the `Run`.
+- Screens rebuild from state whenever the `Rev` resource is bumped (every applied
+  action, every state entry). Fast-changing bits (timer, toasts, battle animation)
+  update in place via marker components, so a rebuild never interrupts a drag.
+- Text must be ASCII: Bevy's built-in font only covers ASCII.
+- Bevy 0.20 source is the best API reference: `git clone --depth 1 --branch v0.20.0
+  --filter=blob:none --sparse https://github.com/bevyengine/bevy` and sparse-checkout
+  `examples/ui` and the crate sources you need.
 
 ## Bevy
 
