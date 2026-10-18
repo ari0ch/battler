@@ -53,6 +53,7 @@ The skill lies in planning, and in reading why a plan went wrong.
   round. Async PvP can come later by swapping AI boards for snapshots of real players.
 - **Player health:** 100 HP. A loss costs **2 + the total level of the enemy units still
   alive**, so a narrow loss hurts less than a wipe. A draw costs nothing.
+  (TFT-like model chosen as a first pass; revisit after playtesting.)
 - **The run ends** at 0 HP (defeat) or after winning through round 15 (victory).
 - **Board size grows by round:** 3 units (rounds 1–2), 4 (3–5), 5 (6–9), 6 (10+).
   Six is also the number of classes, which the one-per-type rule caps anyway.
@@ -73,6 +74,9 @@ Run summary → Main menu.
 - **Run summary:** stats per round and a replay of any battle from its seed.
 
 ### Shop and bench
+
+All numbers in this section and the next are agreed starting points, to tune after playtesting.
+
 
 - 5 offers per round. **Buy 3 gold**, **reroll 2 gold**, **sell** for the purchase price
   of the copies inside (3 per copy).
