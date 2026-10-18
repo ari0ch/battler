@@ -1,0 +1,18 @@
+[package]
+name = "battler"
+description = "Battler game client (Bevy): rendering, program editor and replay UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+battler-sim.workspace = true
+bevy.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { workspace = true, features = ["web"] }
+
+[lints]
+workspace = true

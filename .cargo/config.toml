@@ -1,0 +1,4 @@
+[alias]
+# Native dev loop with dynamic linking for much faster incremental builds.
+# (Not usable for wasm builds; trunk handles those.)
+dev = "run -p battler --features bevy/dynamic_linking"

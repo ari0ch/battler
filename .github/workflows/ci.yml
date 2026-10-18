@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sim:
+    name: Sim (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      # The sim has no dependencies, so this job stays fast.
+      - run: cargo clippy -p battler-sim --all-targets -- -D warnings
+      - run: cargo test -p battler-sim
+
+  game:
+    name: Game (clippy, native build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Bevy's Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libudev-dev libwayland-dev libxkbcommon-dev
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p battler --all-targets -- -D warnings
