@@ -376,3 +376,21 @@ Goal: prove the program → watch → analyse loop is fun, then add the shop.
   synergy tracker and battle strip, and a headless balance harness.
 - **Next candidates:** pixel art (32x32 sprites shown at 2x), projectile/taunt lines,
   synergy-aware AI programs, balance passes from playtesting.
+
+## Upcoming development
+
+In rough order. Each item is discussed before it is built.
+
+1. **PvE rounds (under discussion):** easy monster rounds at the start of a run, before
+   the AI opponents arrive, plus "boss" rounds on set rounds. Gives new players a gentle
+   start and a natural place to drop rewards.
+2. **Playtest clean-up pass (Oct 2026 browser playtest):** header stats and the Buy XP /
+   Reroll buttons wrap; long names overflow shop cards; the level-up notice covers the
+   top of the board; the palette jumps down when a card row is added, causing misclicks;
+   a possible double swap when dragging a bench unit onto an occupied cell; "1 ticks" on
+   the result screen; show only near-term locked blocks in the palette; a "what fired"
+   per-unit summary on the result screen.
+3. **Items:** equipment dropped by PvE and boss rounds, to collect before the game
+   proper starts (TFT-style). Not designed yet. Questions to settle: what items do (stats,
+   new blocks, modified abilities?), how they combine, and how they are equipped in the
+   one-screen planning layout.
