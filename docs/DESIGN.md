@@ -105,8 +105,11 @@ The skill lies in planning, and in reading why a plan went wrong.
     | Level | 3 | 4 | 5 | 6 | 7 | 8 |
     |---|---|---|---|---|---|---|
     | Odds % | 80/20/0 | 65/30/5 | 45/40/15 | 30/45/25 | 20/40/40 | 15/35/50 |
-- **Battlefield:** 8×5 grid. The player places units in the left four columns; the
-  enemy board occupies the right four.
+- **Battlefield (Oct 2026): 7 lanes wide, 4 rows deep a side** (was 8×5 with 5 lanes).
+  Drawn with lanes across the screen and **the enemy half above the player's**. In sim
+  coordinates `x` is depth (0 = the player's back row, 7 = the enemy's back row) and `y`
+  is the lane; the game rotates this for display. Balance harness after the change: all
+  classes 48-51%, lobbies still ~15 rounds.
 
 ### Scenes
 
@@ -114,8 +117,11 @@ Main menu → **run loop** (Planning → Battle → Result, repeated each round)
 Run summary → Main menu.
 
 - **Main menu:** new run, how to play, settings.
-- **Planning (timed): one screen, no modes.** Left to right: synergy tracker, board and
-  bench (as large as possible), and a narrow program column; the shop is the footer.
+- **Planning (timed): one screen, no modes.** Left to right: synergy tracker; a slim
+  "next opponent" strip, **only the player's half of the board** (rotated, front row at
+  the top) and the bench; the program column; and a **narrow standings sidebar** on the
+  right (name, HP and a bar per player). The shop is the footer. (Oct 2026: the enemy
+  half and the standings no longer share the board area.)
   The program column shows the selected unit's cards as single-line rows
   (`if [condition] -> [action]`) with the block palette **underneath**, not beside them.
   Clicking a unit makes its cards editable in place (no separate editor drawer; the
@@ -132,12 +138,17 @@ Run summary → Main menu.
   details in a hover tooltip on any unit, bench slot or shop offer.
 - **Fewer clicks:** buying auto-places on the board when there's room; hotkeys D (reroll),
   E (sell hovered unit), F (buy XP); card-count dots on unit tiles show unprogrammed units.
-- **Battle:** watch the fight, at 1×/2×/4× speed or skipped to the end. On-board numbers
+- **Battle:** the full board, rotated (enemy above), with synergies and the legend in a
+  left column. Watch the fight, at 1×/2×/4× speed or skipped to the end. On-board numbers
   and card badges are always on; the **card trace panel** is an optional toggle,
   **off by default** so new players aren't overwhelmed.
 - **Result:** win/loss, HP lost, and a gold breakdown for next round.
 - **Game over:** victory or defeat, rounds survived, then the run summary.
 - **Run summary:** stats per round and a replay of any battle from its seed.
+- **Art (Oct 2026):** 18 character sprites, 32×32, facing right, drawn at 2× on the
+  board and 1× on the bench, shop and program header; enemies are mirrored. They are
+  embedded in the binary (`crates/game/assets/sprites`). Monsters have no art yet and
+  show their initials.
 
 ### Shop and bench
 
@@ -326,6 +337,15 @@ Rules:
 - **Targeting:** actions with a target have a dropdown: nearest, lowest HP, highest HP,
   strongest, ranged. Ties break by distance, then unit id. Targeting the lowest-HP
   **enemy** is Ranger-only; for allies, "lowest HP" means most hurt by percentage.
+- **The `it` target (Oct 2026, agreed after playtesting).** Conditions that spot a unit
+  pass it to the action: `enemy adjacent`, `enemy in range`, `enemy weak` (the weakest
+  such enemy), `was hit` (the attacker), `enemies grouped`, `enemy isolated` spot an
+  enemy; `ally HP below` (the most hurt such ally) and `ally attacked` spot an ally. So
+  `enemy weak -> Attack it` hits the weak enemy, not just the nearest, and `ally HP <
+  50% -> Heal it` heals the ally that triggered it. Dropping an action after such a
+  condition sets its target to `it` automatically; a program using `it` with a
+  condition that can't supply a unit on the action's side is rejected. The target shows
+  on the card as a pill, so it reads as a setting you can change by clicking.
 - **Taunt overrides targeting:** a taunted unit targets its taunter with every
   enemy-targeted action, whatever its dropdown says.
 - **Cooldowns:** each signature ability has its own cooldown. Abilities start ready.

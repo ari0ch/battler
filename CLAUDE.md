@@ -59,6 +59,11 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   palette) and editing logic. `cards.rs`: all block/character/synergy wording and tooltips.
 - Tooltips: add `Hovered::default()` plus a `ui::Tooltip` to any entity; one shared
   floating panel shows it.
+- `sprites.rs`: the 18 character sprites (32x32 PNGs in `crates/game/assets/sprites`),
+  embedded with `include_bytes!` and decoded once into the `Sprites` resource. Draw them
+  with `sprite_node` at whole-number scales (2x on the board) so pixels stay crisp.
+- Boards are drawn rotated from sim coordinates: lanes (`y`) across the screen, depth
+  (`x`) up the screen with the enemy half above. Planning shows only the player's half.
 - Screens rebuild from state whenever the `Rev` resource is bumped (every applied
   action, every state entry). Fast-changing bits (timer, toasts, battle animation)
   update in place via marker components, so a rebuild never interrupts a drag.
