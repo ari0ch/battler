@@ -20,6 +20,7 @@ mod battle;
 mod class;
 mod exec;
 mod grid;
+pub mod monster;
 mod program;
 mod rng;
 pub mod run;
@@ -34,10 +35,11 @@ pub use battle::{
 };
 pub use class::{Ability, Character, Class, Level, Passive, Rarity, Stats};
 pub use grid::Pos;
+pub use monster::{Monster, Wave};
 pub use program::{
     Action, CardRef, Condition, MAX_CARDS, Node, Program, ProgramError, Requirement, Scope, Signal,
     Target, Threshold, Unlocks, WEAK_PERCENT, palette_actions, palette_conditions,
 };
 pub use rng::Rng;
 pub use synergy::Synergies;
-pub use unit::{Statuses, Team, Unit, UnitId, UnitSpec};
+pub use unit::{Statuses, Team, Unit, UnitId, UnitKind, UnitSpec};

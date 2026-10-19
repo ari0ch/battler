@@ -192,16 +192,19 @@ impl Battle {
         if self.is_occupied(pos) {
             return Err(SpawnError::Occupied(pos));
         }
-        spec.program.validate_basic(spec.character)?;
+        spec.program.validate_basic(spec.kind)?;
 
-        let stats = spec.level.scale(spec.character.base_stats());
+        let mut stats = spec.level.scale(spec.kind.base_stats());
+        let boost = 100 + spec.boost_percent;
+        stats.max_hp = stats.max_hp * boost / 100;
+        stats.attack = stats.attack * boost / 100;
         let id = UnitId(self.next_id);
         self.next_id += 1;
         self.units.push(Unit {
             id,
             team,
-            character: spec.character,
-            class: spec.character.class(),
+            kind: spec.kind,
+            class: spec.kind.class(),
             level: spec.level,
             stats,
             pos,
@@ -261,7 +264,7 @@ impl Battle {
 
     fn compute_synergies(&self, team: Team) -> Synergies {
         Synergies::from_characters(
-            self.units.iter().filter(|u| u.team == team).map(|u| u.character),
+            self.units.iter().filter(|u| u.team == team).filter_map(|u| u.kind.character()),
         )
     }
 

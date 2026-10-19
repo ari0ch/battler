@@ -12,7 +12,7 @@
 use std::fmt;
 
 use crate::synergy::Synergies;
-use crate::{Ability, Character, Class, Level};
+use crate::{Ability, Character, Class, Level, UnitKind};
 
 /// A percentage threshold picked from a dropdown in the editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -407,14 +407,15 @@ impl Program {
     }
 
     /// Basic checks that hold regardless of unlocks: card count within the
-    /// absolute maximum and only this character's signatures.
-    pub fn validate_basic(&self, character: Character) -> Result<(), ProgramError> {
+    /// absolute maximum and only this unit's own signatures.
+    pub fn validate_basic(&self, kind: impl Into<UnitKind>) -> Result<(), ProgramError> {
+        let kind = kind.into();
         if self.nodes.len() > MAX_CARDS {
             return Err(ProgramError::TooManyCards { max: MAX_CARDS, got: self.nodes.len() });
         }
         for (index, node) in self.nodes.iter().enumerate() {
             if let Requirement::Signature(ability) = node.action.requirement()
-                && !character.has_ability(ability)
+                && !kind.has_ability(ability)
             {
                 return Err(ProgramError::NotThisCharacter { index, ability });
             }

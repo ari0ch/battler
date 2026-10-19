@@ -11,7 +11,9 @@ use std::cmp::Reverse;
 
 use crate::battle::{CRIT_DAMAGE_PERCENT, StatusKind};
 use crate::program::{Requirement, WEAK_PERCENT};
-use crate::{Action, Battle, CardRef, Class, Condition, Event, Node, Passive, Pos, Target};
+use crate::{
+    Action, Battle, CardRef, Class, Condition, Event, MAX_CARDS, Node, Passive, Pos, Target,
+};
 
 /// Who an action may target.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,7 +66,11 @@ impl Battle {
     /// Cards this unit may run: its program, capped by its level's slots (plus synergy).
     fn card_slots(&self, i: usize) -> usize {
         let u = &self.units[i];
-        let max = self.synergies[u.team.index()].card_slots(u.character, u.level);
+        // Monsters run their whole fixed program.
+        let max = match u.kind.character() {
+            Some(c) => self.synergies[u.team.index()].card_slots(c, u.level),
+            None => MAX_CARDS,
+        };
         u.program.len().min(max)
     }
 
@@ -91,8 +97,10 @@ impl Battle {
         let u = &self.units[i];
         let syn = &self.synergies[u.team.index()];
         node.requirements().all(|req| match req {
-            Requirement::Synergy(class, scope) => syn.allows(class, scope, u.character),
-            Requirement::Signature(a) => u.character.has_ability(a),
+            Requirement::Synergy(class, scope) => {
+                u.kind.character().is_some_and(|c| syn.allows(class, scope, c))
+            }
+            Requirement::Signature(a) => u.kind.has_ability(a),
             Requirement::Start | Requirement::PlayerLevel(_) => true,
         })
     }

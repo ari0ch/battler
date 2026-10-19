@@ -1,4 +1,4 @@
-use crate::{Ability, Character, Class, Level, Passive, Pos, Program, Stats};
+use crate::{Ability, Character, Class, Level, Monster, Passive, Pos, Program, Stats};
 
 /// Stable identifier for a unit within one battle. Also defines turn order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -26,17 +26,106 @@ impl Team {
     }
 }
 
-/// What the player chooses for a unit before a battle.
+/// What a unit is: one of the named characters, or a monster.
+///
+/// Most of the battle code only needs a unit's class, stats, abilities and
+/// passive, which both kinds provide, so it never has to match on this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum UnitKind {
+    Character(Character),
+    Monster(Monster),
+}
+
+impl UnitKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            UnitKind::Character(c) => c.name(),
+            UnitKind::Monster(m) => m.name(),
+        }
+    }
+
+    pub fn short_name(self) -> &'static str {
+        match self {
+            UnitKind::Character(c) => c.short_name(),
+            UnitKind::Monster(m) => m.short_name(),
+        }
+    }
+
+    pub fn class(self) -> Class {
+        match self {
+            UnitKind::Character(c) => c.class(),
+            UnitKind::Monster(m) => m.class(),
+        }
+    }
+
+    pub fn base_stats(self) -> Stats {
+        match self {
+            UnitKind::Character(c) => c.base_stats(),
+            UnitKind::Monster(m) => m.base_stats(),
+        }
+    }
+
+    pub fn abilities(self) -> &'static [Ability] {
+        match self {
+            UnitKind::Character(c) => c.abilities(),
+            UnitKind::Monster(m) => m.abilities(),
+        }
+    }
+
+    pub fn has_ability(self, ability: Ability) -> bool {
+        self.abilities().contains(&ability)
+    }
+
+    pub fn passive(self) -> Option<Passive> {
+        match self {
+            UnitKind::Character(c) => c.passive(),
+            UnitKind::Monster(m) => m.passive(),
+        }
+    }
+
+    /// The character, if this is one (only characters count for synergies).
+    pub fn character(self) -> Option<Character> {
+        match self {
+            UnitKind::Character(c) => Some(c),
+            UnitKind::Monster(_) => None,
+        }
+    }
+
+    pub fn monster(self) -> Option<Monster> {
+        match self {
+            UnitKind::Monster(m) => Some(m),
+            UnitKind::Character(_) => None,
+        }
+    }
+}
+
+// These `From` impls let any function taking `impl Into<UnitKind>` accept a
+// `Character` or a `Monster` directly.
+impl From<Character> for UnitKind {
+    fn from(c: Character) -> Self {
+        UnitKind::Character(c)
+    }
+}
+
+impl From<Monster> for UnitKind {
+    fn from(m: Monster) -> Self {
+        UnitKind::Monster(m)
+    }
+}
+
+/// Everything needed to spawn a unit in a battle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitSpec {
-    pub character: Character,
+    pub kind: UnitKind,
     pub level: Level,
     pub program: Program,
+    /// Extra HP and attack in percent, on top of level scaling (later bosses).
+    pub boost_percent: u32,
 }
 
 impl UnitSpec {
-    pub fn new(character: Character, level: Level, program: Program) -> Self {
-        Self { character, level, program }
+    pub fn new(kind: impl Into<UnitKind>, level: Level, program: Program) -> Self {
+        Self { kind: kind.into(), level, program, boost_percent: 0 }
     }
 }
 
@@ -67,7 +156,7 @@ pub struct Statuses {
 pub struct Unit {
     pub id: UnitId,
     pub team: Team,
-    pub character: Character,
+    pub kind: UnitKind,
     pub class: Class,
     pub level: Level,
     pub stats: Stats,
@@ -107,7 +196,7 @@ impl Unit {
     }
 
     pub fn has_passive(&self, passive: Passive) -> bool {
-        self.character.passive() == Some(passive)
+        self.kind.passive() == Some(passive)
     }
 
     /// True if hit during the previous tick or this one.

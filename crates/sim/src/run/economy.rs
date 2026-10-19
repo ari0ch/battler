@@ -15,8 +15,18 @@ pub const MAX_INTEREST: u32 = 5;
 pub const REROLL_COST: u32 = 2;
 pub const SHOP_SIZE: usize = 5;
 pub const BENCH_SIZE: usize = 9;
-/// Surviving this round with HP left wins the run.
-pub const FINAL_ROUND: u32 = 15;
+
+/// Players in a lobby. The last one standing wins.
+pub const LOBBY_SIZE: usize = 8;
+
+/// PvE rounds: monsters on rounds 1-3, then a boss every `BOSS_EVERY` rounds.
+pub const FIRST_BOSS_ROUND: u32 = 7;
+pub const BOSS_EVERY: u32 = 4;
+/// Gold for beating a monster round or a boss.
+pub const MONSTER_REWARD: u32 = 2;
+pub const BOSS_REWARD: u32 = 4;
+/// HP lost to a monster round. Boss losses scale with the round instead.
+pub const MONSTER_LOSS_DAMAGE: u32 = 2;
 
 /// Player levels. Board size equals the player's level.
 pub const START_LEVEL: u32 = 3;
@@ -76,6 +86,16 @@ pub fn streak_bonus(length: u32) -> u32 {
 /// HP lost when a battle is lost: 2 plus the levels of the enemy units still alive.
 pub fn loss_damage(surviving_enemy_levels: u32) -> u32 {
     2 + surviving_enemy_levels
+}
+
+/// HP lost when a PvE round is lost.
+pub fn pve_loss_damage(boss: bool, round: u32) -> u32 {
+    if boss { 2 + round } else { MONSTER_LOSS_DAMAGE }
+}
+
+/// Gold for winning a PvE round.
+pub fn pve_reward(boss: bool) -> u32 {
+    if boss { BOSS_REWARD } else { MONSTER_REWARD }
 }
 
 /// The gold a player receives at the end of a round, itemised for the result screen.

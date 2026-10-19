@@ -99,9 +99,9 @@ impl Rarity {
     /// Copies of each character of this rarity in the shared pool.
     pub fn pool_copies(self) -> u32 {
         match self {
-            Rarity::Common => 12,
-            Rarity::Rare => 10,
-            Rarity::Epic => 8,
+            Rarity::Common => 29,
+            Rarity::Rare => 22,
+            Rarity::Epic => 18,
         }
     }
 

@@ -5,22 +5,23 @@
 //! cargo run -p battler-sim --example balance --release
 //! ```
 //!
-//! Optional arguments: number of team fights, number of runs (defaults 6000, 300).
+//! Optional arguments: number of team fights, number of lobbies (defaults 6000, 200).
 //! Output is Markdown, ready to paste into `docs/DESIGN.md`.
 
+use battler_sim::run::bot::preset_program;
 use battler_sim::run::economy::{BENCH_SIZE, PLAYER_COLUMNS, XP_COST};
-use battler_sim::run::{Location, Run, RunStatus, ai::preset_program};
+use battler_sim::run::{Command, Lobby, Location, Opponent, PlayerId};
 use battler_sim::{
-    Battle, Character, Class, Level, Outcome, Pos, Program, Rng, Synergies, Team, UnitSpec,
+    Battle, Character, Class, Level, Outcome, Pos, Program, Rng, Synergies, Team, UnitSpec, Wave,
 };
 
 fn main() {
     let mut args = std::env::args().skip(1).map(|a| a.parse::<u64>().expect("a number"));
     let fights = args.next().unwrap_or(6000);
-    let runs = args.next().unwrap_or(300);
+    let lobbies = args.next().unwrap_or(200);
 
     team_fights(fights);
-    full_runs(runs);
+    full_lobbies(lobbies);
 }
 
 // ----- Random team fights --------------------------------------------------
@@ -140,70 +141,148 @@ fn team_fights(fights: u64) {
     );
 }
 
-// ----- Full runs with a simple bot -------------------------------------------
+// ----- Full lobbies -----------------------------------------------------------
 
-/// A naive bot: buys anything affordable, buys XP with spare gold, fills the
-/// board with distinct characters and gives them the AI's preset programs.
-fn bot_turn(run: &mut Run) {
+const ME: PlayerId = PlayerId(0);
+
+/// A naive player in the human's seat: buys anything affordable, buys XP with
+/// spare gold, fills the board and uses the preset programs. Roughly a new
+/// player who doesn't plan merges or synergies.
+fn naive_turn(lobby: &mut Lobby) {
     loop {
-        let keep = if run.round() > 3 { 10 } else { 0 };
-        let affordable = run
-            .shop()
-            .iter()
-            .position(|o| o.is_some_and(|c| c.rarity().cost() + keep <= run.gold()));
+        let p = lobby.player(ME);
+        let keep = if lobby.round() > 3 { 10 } else { 0 };
+        let affordable =
+            p.shop().iter().position(|o| o.is_some_and(|c| c.rarity().cost() + keep <= p.gold()));
         let Some(slot) = affordable else { break };
-        if run.buy(slot).is_err() {
+        if lobby.apply(ME, Command::Buy(slot)).is_err() {
             break;
         }
     }
-    while run.gold() >= XP_COST + 20 && run.buy_xp().is_ok() {}
-
+    while lobby.player(ME).gold() >= XP_COST + 20 && lobby.apply(ME, Command::BuyXp).is_ok() {}
     for i in 0..BENCH_SIZE {
-        let Some(unit) = run.bench()[i].clone() else { continue };
-        if run.board().len() >= run.board_limit()
-            || run.board().iter().any(|(_, b)| b.character == unit.character)
+        let p = lobby.player(ME);
+        let Some(unit) = p.bench()[i].clone() else { continue };
+        if p.board().len() >= p.board_limit()
+            || p.board().iter().any(|(_, b)| b.character == unit.character)
         {
             continue;
         }
-        let spot = (0..PLAYER_COLUMNS)
-            .flat_map(|x| (0..5).map(move |y| Pos::new(x, y)))
-            .find(|p| run.unit_at(Location::Board(*p)).is_none());
-        if let Some(p) = spot {
-            let _ = run.move_unit(Location::Bench(i), Location::Board(p));
+        if let Some(to) = p.suggested_spot(unit.character) {
+            let from = Location::Bench(i);
+            let _ = lobby.apply(ME, Command::Move { from, to: Location::Board(to) });
         }
     }
-    for (p, u) in run.board().to_vec() {
-        let mut nodes = preset_program(u.character);
-        nodes.truncate(run.synergies().card_slots(u.character, u.level));
-        let _ = run.set_program(Location::Board(p), Program::new(nodes));
+    let p = lobby.player(ME);
+    let programs: Vec<(Location, Program)> = p
+        .board()
+        .iter()
+        .map(|(pos, u)| {
+            let mut nodes = preset_program(u.character);
+            nodes.truncate(p.synergies().card_slots(u.character, u.level));
+            (Location::Board(*pos), Program::new(nodes))
+        })
+        .collect();
+    for (loc, program) in programs {
+        let _ = lobby.apply(ME, Command::SetProgram(loc, program));
     }
 }
 
-fn full_runs(runs: u64) {
-    let (mut victories, mut rounds, mut levels, mut wins) = (0u32, 0u32, 0u32, 0u32);
-    for seed in 0..runs {
-        let mut run = Run::new(seed);
-        while run.status() == RunStatus::Planning {
-            bot_turn(&mut run);
-            let setup = run.start_battle().unwrap();
-            let mut battle = setup.build();
-            battle.run_to_end();
-            wins += u32::from(battle.outcome() == Outcome::Won(Team::Player));
-            run.resolve(&battle);
+/// Wins and fights per PvE round label.
+#[derive(Default)]
+struct Tally {
+    rows: Vec<(String, u32, u32)>,
+}
+
+impl Tally {
+    fn add(&mut self, label: String, won: bool) {
+        match self.rows.iter_mut().find(|(l, _, _)| *l == label) {
+            Some(row) => {
+                row.1 += u32::from(won);
+                row.2 += 1;
+            }
+            None => self.rows.push((label, u32::from(won), 1)),
         }
-        victories += u32::from(run.status() == RunStatus::Victory);
-        rounds += run.round();
-        levels += run.level();
     }
-    let n = runs as f64;
-    println!("## Full runs ({runs} runs, naive bot)\n");
-    println!("| Victory rate | Avg. final round | Avg. final level | Avg. battles won |");
-    println!("|---|---|---|---|");
+}
+
+fn full_lobbies(lobbies: u64) {
+    let mut rounds = Vec::new();
+    let mut naive_placements = Vec::new();
+    let mut pve = Tally::default();
+    let mut levels_at = [(7u32, 0u32, 0u32), (11, 0, 0), (15, 0, 0)];
+    for seed in 0..lobbies {
+        let mut lobby = Lobby::new(seed, 1);
+        while !lobby.is_over() {
+            if lobby.player(ME).is_alive() {
+                naive_turn(&mut lobby);
+            }
+            for row in levels_at.iter_mut().filter(|r| r.0 == lobby.round()) {
+                for p in lobby.players().iter().filter(|p| p.is_alive()) {
+                    row.1 += p.level();
+                    row.2 += 1;
+                }
+            }
+            lobby.start_round().unwrap();
+            lobby.resolve();
+            assert!(lobby.round() < 200, "lobby {seed} never ended");
+        }
+        rounds.push(lobby.round());
+        naive_placements.push(lobby.player(ME).placement().unwrap());
+        for p in lobby.players().iter().skip(1) {
+            for (_, r) in p.history() {
+                if let Opponent::Monsters(wave) = r.opponent {
+                    let label = match wave {
+                        Wave::Boss { tier, .. } => {
+                            format!("{} (round {}, tier {tier})", wave.name(), r.round)
+                        }
+                        _ => format!("{} (round {})", wave.name(), r.round),
+                    };
+                    pve.add(label, r.result == Some(true));
+                }
+            }
+        }
+    }
+    let n = lobbies as f64;
+    let avg = |v: &[u32]| v.iter().sum::<u32>() as f64 / v.len() as f64;
+    println!("## Full lobbies ({lobbies} lobbies: 7 bots and a naive player)\n");
+    println!("| Avg. rounds | Shortest | Longest | Naive player avg. placement | Naive top 4 |");
+    println!("|---|---|---|---|---|");
     println!(
-        "| {:.0}% | {:.1} | {:.1} | {:.1} |",
-        100.0 * f64::from(victories) / n,
-        f64::from(rounds) / n,
-        f64::from(levels) / n,
-        f64::from(wins) / n
+        "| {:.1} | {} | {} | {:.1} | {:.0}% |",
+        avg(&rounds),
+        rounds.iter().min().unwrap(),
+        rounds.iter().max().unwrap(),
+        avg(&naive_placements),
+        100.0 * naive_placements.iter().filter(|&&p| p <= 4).count() as f64 / n
     );
+    println!();
+    println!(
+        "Average bot-lobby player level: {}.\n",
+        levels_at
+            .iter()
+            .map(|(r, sum, k)| format!(
+                "round {r}: {:.1}",
+                f64::from(*sum) / f64::from((*k).max(1))
+            ))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!("| PvE round (bots) | Win rate | Fights |");
+    println!("|---|---|---|");
+    pve.rows.sort_by_key(|(l, _, _)| {
+        l.split("round ")
+            .nth(1)
+            .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|r| r.parse::<u32>().ok())
+            .unwrap_or(0)
+    });
+    for (label, won, fights) in &pve.rows {
+        if *fights >= 5 {
+            println!(
+                "| {label} | {:.0}% | {fights} |",
+                100.0 * f64::from(*won) / f64::from(*fights)
+            );
+        }
+    }
 }
