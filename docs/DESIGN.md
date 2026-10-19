@@ -35,15 +35,16 @@ The skill lies in planning, and in reading why a plan went wrong.
 - **A node is a rule card:** an optional condition plus one action
   (`[enemy adjacent?] → [ATTACK]`). Each tick the unit checks its cards top to bottom and
   runs the first whose condition is true. Card order is part of the puzzle.
-- **Node count grows with unit level:** level 1 has 2 nodes, level 2 has 3, level 3 has 4.
+- **Node count grows with unit level:** level 1 has 2 nodes, level 2 has 3, level 3 has 4
+  (confirmed; synergies may add a slot on top).
 - **Programming happens in the planning phase** between battles. Rounds are time-limited.
 - **Blocks unlock as the player levels up.** A run starts with a small set of conditions and
   actions; each player level introduces a few more, with a notification saying what's new.
   This replaces "everything available from round 1", which playtesting found overwhelming.
 - **Every block has a hover tooltip** explaining exactly what it does and when it falls
   through.
-- **The block list is being reassessed** (some current blocks are rarely useful). See the
-  proposal under Open questions; the reference tables below describe the current build.
+- **The block list has been reassessed** (see Block reassessment below). The reference
+  tables further down describe the current build until it's implemented.
 
 ### Units and board
 
@@ -191,13 +192,8 @@ In priority order:
    follow if fights feel too predictable.
 2. **AI difficulty curve:** how quickly AI boards gain levels and units.
 3. **Art direction and sourcing** for pixel art.
-4. **The roster:** 18 named characters (6 classes × 3 rarities), their signatures, passives
-   and stats. Under discussion.
-5. **Class synergies:** thresholds and programming hooks per class. Under discussion.
-6. **Block reassessment and unlock order:** which blocks to cut, merge or add, and which
-   player level introduces each. Under discussion.
-7. **Player level numbers:** XP per round, XP cost, level thresholds, board size and shop
-   odds per level. Under discussion.
+4. **Class synergies:** thresholds and programming hooks per class. Under discussion.
+5. **Simulation pass** on player level numbers, shop odds and block unlocks once built.
 
 ## Roster (agreed draft, 18 characters)
 
@@ -218,7 +214,7 @@ New sim mechanics this needs: freeze (skip a turn), mark, execute, untargetable,
 resurrection, cheat-death, plus new abilities Firebolt, Frost Nova, Second Wind, Volley,
 Mass Heal, Assassinate and Rampage. Numbers are first guesses for the balance harness.
 
-## Block reassessment (proposed, not yet agreed)
+## Block reassessment (agreed; to be checked by simulation)
 
 - **Cut:** ability ready (fall-through already covers cooldowns), always (an empty
   condition means always), Advance (the locked rule advances), Hold, every N ticks.
