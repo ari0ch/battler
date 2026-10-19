@@ -56,9 +56,8 @@ The skill lies in planning, and in reading why a plan went wrong.
 - **Rarity:** each class has characters at **3 rarities** (18 characters to start).
   Higher rarities cost more, appear later (via player level, below) and are stronger.
   Example: an early Common Knight brings Taunt; a later one brings Shield Wall or a self-heal.
-- **Class synergies hook into programming:** fielding several characters of a class unlocks
-  things for your programs (extra card slots, new blocks, stronger versions of blocks)
-  rather than only stat bonuses. Exact synergies to be designed with the roster.
+- **Class synergies hook into programming** (see Synergies below): fielding several
+  characters of a class unlocks things for your programs, not just stat bonuses.
 - **One copy of each character on the board** (two different Knights are fine).
   Further copies sit inactive on the bench.
 - **Bench: 9 slots** (as in TFT), enough to work on several upgrades at once while still
@@ -192,8 +191,7 @@ In priority order:
    follow if fights feel too predictable.
 2. **AI difficulty curve:** how quickly AI boards gain levels and units.
 3. **Art direction and sourcing** for pixel art.
-4. **Class synergies:** thresholds and programming hooks per class. Under discussion.
-5. **Simulation pass** on player level numbers, shop odds and block unlocks once built.
+4. **Simulation pass** on player level numbers, shop odds and block unlocks once built.
 
 ## Roster (agreed draft, 18 characters)
 
@@ -213,6 +211,29 @@ signatures, a passive, and slightly higher stats. Costs 1 / 2 / 3 gold; pool cop
 New sim mechanics this needs: freeze (skip a turn), mark, execute, untargetable,
 resurrection, cheat-death, plus new abilities Firebolt, Frost Nova, Second Wind, Volley,
 Mass Heal, Assassinate and Rampage. Numbers are first guesses for the balance harness.
+
+## Synergies (agreed)
+
+Thresholds **2 and 3** (three characters per class). At **2**, a new block unlocks; at
+**3**, the class gets a stronger effect. Some unlocked blocks are **team-wide**
+(coordination tools), others **class-only** (class tricks); the palette and tooltips label
+which.
+
+| Class | 2 units: new block | Scope | 3 units: class bonus |
+|---|---|---|---|
+| Knights | *ally attacked* (condition): an adjacent ally took damage last tick | Knights only | Knights get **+1 card slot** |
+| Rangers | *marked* (target): the enemy a Ranger hit most recently | **Team** | Rangers get +1 range |
+| Mages | *enemies grouped* (condition): 2+ enemies next to each other in range | Mages only | Mage signature cooldowns -2 |
+| Clerics | **Send Signal** and **signal received** (red and blue) | **Team** | Receiving a signal heals 10% max HP |
+| Rogues | *enemy isolated* (condition): an enemy with no allies within 2 cells | Rogues only | Rogue crit chance doubles (15% -> 30%) |
+| Berserkers | *surrounded* (condition): 2+ enemies adjacent | Berserkers only | **Fury**: when a Berserker's card fires, the next card also runs if it can (one chain per tick) |
+
+Rules:
+- Synergies count **units on the board only**; each character counts once.
+- If a synergy drops (a unit sold or benched), cards using its blocks are **kept but greyed
+  out and skipped** in battle, and the tracker warns. Programs are never lost.
+- **AI opponents build towards synergies** too.
+- All effects are first guesses for the balance harness.
 
 ## Block reassessment (agreed; to be checked by simulation)
 
