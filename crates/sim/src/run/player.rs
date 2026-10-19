@@ -162,11 +162,11 @@ impl Player {
     /// Where a character would be placed automatically: the first free cell,
     /// melee from the front column back, ranged from the back column forward.
     pub fn suggested_spot(&self, character: Character) -> Option<Pos> {
-        let rows = [2, 1, 3, 0, 4];
+        let rows = LANES_FROM_CENTRE;
         let columns: Vec<i32> = if character.class().is_ranged() {
-            (0..PLAYER_COLUMNS).collect()
+            (0..SIDE_DEPTH).collect()
         } else {
-            (0..PLAYER_COLUMNS).rev().collect()
+            (0..SIDE_DEPTH).rev().collect()
         };
         columns
             .iter()
@@ -315,7 +315,7 @@ impl Player {
         let moving = self.unit_at(from).ok_or(RunError::Empty(from))?.clone();
         let displaced = self.unit_at(to).cloned();
         if let Location::Board(p) = to
-            && (!(0..PLAYER_COLUMNS).contains(&p.x) || !(0..BOARD_HEIGHT).contains(&p.y))
+            && (!(0..SIDE_DEPTH).contains(&p.x) || !(0..BOARD_LANES).contains(&p.y))
         {
             return Err(RunError::NotPlayerSide(p));
         }

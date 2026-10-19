@@ -9,7 +9,9 @@
 //! Output is Markdown, ready to paste into `docs/DESIGN.md`.
 
 use battler_sim::run::bot::preset_program;
-use battler_sim::run::economy::{BENCH_SIZE, PLAYER_COLUMNS, XP_COST};
+use battler_sim::run::economy::{
+    BENCH_SIZE, BOARD_DEPTH, BOARD_LANES, LANES_FROM_CENTRE, MAX_TICKS, SIDE_DEPTH, XP_COST,
+};
 use battler_sim::run::{Command, Lobby, Location, Opponent, PlayerId};
 use battler_sim::{
     Battle, Character, Class, Level, Outcome, Pos, Program, Rng, Synergies, Team, UnitSpec, Wave,
@@ -28,13 +30,13 @@ fn main() {
 
 /// Places characters on one side: melee in the front columns, ranged at the back.
 fn place(team: Team, characters: &[Character], level: Level) -> Vec<(Pos, UnitSpec)> {
-    let rows = [2, 1, 3, 0, 4];
+    let rows = LANES_FROM_CENTRE;
     let (front, back) = match team {
-        Team::Player => (PLAYER_COLUMNS - 1, 0),
-        Team::Enemy => (PLAYER_COLUMNS, 7),
+        Team::Player => (SIDE_DEPTH - 1, 0),
+        Team::Enemy => (SIDE_DEPTH, BOARD_DEPTH - 1),
     };
     let step = if front > back { -1 } else { 1 };
-    let columns: Vec<i32> = (0..PLAYER_COLUMNS).map(|i| front + step * i).collect();
+    let columns: Vec<i32> = (0..SIDE_DEPTH).map(|i| front + step * i).collect();
     let mut used = Vec::new();
     characters
         .iter()
@@ -75,7 +77,7 @@ fn team_fights(fights: u64) {
         let level = if seed % 3 == 0 { Level::Two } else { Level::One };
         let a = random_team(size, &mut rng);
         let b = random_team(size, &mut rng);
-        let mut battle = Battle::new(8, 5, 200, seed);
+        let mut battle = Battle::new(BOARD_DEPTH, BOARD_LANES, MAX_TICKS, seed);
         for (team, chars) in [(Team::Player, &a), (Team::Enemy, &b)] {
             for (pos, spec) in place(team, chars, level) {
                 battle.spawn(team, pos, spec).unwrap();

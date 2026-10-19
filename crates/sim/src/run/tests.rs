@@ -58,7 +58,7 @@ fn buying_costs_rarity_price_and_auto_places() {
     assert_eq!(p.gold(), 10 - Rarity::Rare.cost());
     assert_eq!(p.shop()[0], None);
     assert_eq!(p.board().len(), 1, "room on the board: placed straight away");
-    assert_eq!(p.board()[0].0.x, PLAYER_COLUMNS - 1, "melee goes to the front");
+    assert_eq!(p.board()[0].0.x, SIDE_DEPTH - 1, "melee goes to the front");
     assert_eq!(p.buy(0), Err(RunError::NoOffer(0)));
 
     p.set_shop(PipQuickfeather);

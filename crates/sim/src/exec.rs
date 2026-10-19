@@ -25,6 +25,14 @@ enum Side {
     },
 }
 
+/// The result of checking a card's condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Check {
+    Fails,
+    /// The condition holds, and spotted this unit (by index), if it is about one.
+    Holds(Option<usize>),
+}
+
 impl Battle {
     /// Runs one unit's turn: the first usable card whose condition holds and whose
     /// action succeeds, otherwise the locked default rule.
@@ -79,11 +87,15 @@ impl Battle {
         // `Node` is `Copy`, so this copies it out instead of holding a borrow
         // of `self.units` while the action below mutates the battle.
         let Some(&node) = self.units[i].program.nodes().get(n) else { return false };
-        if !self.card_usable(i, &node) || !self.condition_holds(i, node.condition) {
+        if !self.card_usable(i, &node) {
             return false;
         }
+        let Check::Holds(spotted) = self.check(i, node.condition) else { return false };
         let start = events.len();
-        if self.try_action(i, node.action, events) {
+        self.it = spotted;
+        let done = self.try_action(i, node.action, events);
+        self.it = None;
+        if done {
             let unit = self.units[i].id;
             events.insert(start, Event::CardFired { unit, card: CardRef::Node(n) });
             true
@@ -105,43 +117,76 @@ impl Battle {
         })
     }
 
-    fn condition_holds(&self, i: usize, condition: Condition) -> bool {
+    /// Checks a card's condition. Conditions about another unit also say which
+    /// unit they spotted, for actions that target `it`. Each picks one unit
+    /// deterministically: the best fit, then the nearest, then the lowest id.
+    fn check(&self, i: usize, condition: Condition) -> Check {
         let me = &self.units[i];
         let tick = self.tick;
+        let range = me.stats.range;
+        let near = |j: usize| (self.dist(i, j), self.units[j].id);
+        let spot = |found: Option<usize>| found.map_or(Check::Fails, |j| Check::Holds(Some(j)));
+        let holds = |b: bool| if b { Check::Holds(None) } else { Check::Fails };
         match condition {
-            Condition::Always => true,
-            Condition::EnemyAdjacent => self.enemies_of(i).any(|j| self.dist(i, j) == 1),
-            Condition::EnemyInRange => {
-                self.enemies_of(i).any(|j| self.dist(i, j) <= me.stats.range)
+            Condition::Always => Check::Holds(None),
+            Condition::EnemyAdjacent => {
+                spot(self.enemies_of(i).filter(|&j| self.dist(i, j) == 1).min_by_key(|&j| near(j)))
             }
-            Condition::MyHpBelow(t) => me.hp_percent() < t.percent(),
-            Condition::AllyHpBelow(t) => {
-                self.allies_of(i, false).any(|j| self.units[j].hp_percent() < t.percent())
-            }
+            Condition::EnemyInRange => spot(
+                self.enemies_of(i).filter(|&j| self.dist(i, j) <= range).min_by_key(|&j| near(j)),
+            ),
+            Condition::MyHpBelow(t) => holds(me.hp_percent() < t.percent()),
+            Condition::AllyHpBelow(t) => spot(
+                self.allies_of(i, false)
+                    .filter(|&j| self.units[j].hp_percent() < t.percent())
+                    .min_by_key(|&j| (self.units[j].hp_percent(), near(j))),
+            ),
             Condition::Outnumbered => {
                 let enemies = self.enemies_of(i).filter(|&j| self.dist(i, j) <= 2).count();
                 let allies = self.allies_of(i, true).filter(|&j| self.dist(i, j) <= 2).count();
-                enemies > allies
+                holds(enemies > allies)
             }
-            Condition::EnemyWeak => self.enemies_of(i).any(|j| {
-                self.dist(i, j) <= me.stats.range && self.units[j].hp_percent() < WEAK_PERCENT
-            }),
-            Condition::WasHit => me.recently_hit(tick),
-            Condition::AllyAttacked => self
-                .allies_of(i, false)
-                .any(|j| self.dist(i, j) == 1 && self.units[j].recently_hit(tick)),
-            Condition::EnemiesGrouped => self.enemies_of(i).any(|j| {
-                self.dist(i, j) <= me.stats.range
-                    && self.enemies_of(i).any(|k| k != j && self.dist(j, k) == 1)
-            }),
-            Condition::EnemyIsolated => self
-                .enemies_of(i)
-                .any(|j| !self.enemies_of(i).any(|k| k != j && self.dist(j, k) <= 2)),
+            Condition::EnemyWeak => spot(
+                self.enemies_of(i)
+                    .filter(|&j| {
+                        self.dist(i, j) <= range && self.units[j].hp_percent() < WEAK_PERCENT
+                    })
+                    .min_by_key(|&j| (self.units[j].hp, near(j))),
+            ),
+            Condition::WasHit => {
+                if !me.recently_hit(tick) {
+                    return Check::Fails;
+                }
+                // The attacker may have died since; the condition still holds.
+                let attacker = me
+                    .statuses
+                    .hit_by
+                    .and_then(|id| self.enemies_of(i).find(|&j| self.units[j].id == id));
+                Check::Holds(attacker)
+            }
+            Condition::AllyAttacked => spot(
+                self.allies_of(i, false)
+                    .filter(|&j| self.dist(i, j) == 1 && self.units[j].recently_hit(tick))
+                    .min_by_key(|&j| near(j)),
+            ),
+            Condition::EnemiesGrouped => spot(
+                self.enemies_of(i)
+                    .filter(|&j| {
+                        self.dist(i, j) <= range
+                            && self.enemies_of(i).any(|k| k != j && self.dist(j, k) == 1)
+                    })
+                    .min_by_key(|&j| near(j)),
+            ),
+            Condition::EnemyIsolated => spot(
+                self.enemies_of(i)
+                    .filter(|&j| !self.enemies_of(i).any(|k| k != j && self.dist(j, k) <= 2))
+                    .min_by_key(|&j| near(j)),
+            ),
             Condition::Surrounded => {
-                self.enemies_of(i).filter(|&j| self.dist(i, j) == 1).count() >= 2
+                holds(self.enemies_of(i).filter(|&j| self.dist(i, j) == 1).count() >= 2)
             }
             Condition::SignalReceived(signal) => {
-                self.signals_active[me.team.index()] & signal.bit() != 0
+                holds(self.signals_active[me.team.index()] & signal.bit() != 0)
             }
         }
     }
@@ -582,6 +627,8 @@ impl Battle {
             || self.side_of(i, side).filter(move |&j| side != Side::Enemies || self.targetable(j));
         let near = |j: usize| (self.dist(i, j), self.units[j].id);
         match target {
+            // The spotted unit, if it is still a valid pick on this side.
+            Target::It => self.it.filter(|&j| candidates().any(|k| k == j)),
             Target::Nearest => candidates().min_by_key(|&j| near(j)),
             Target::Weakest => match side {
                 Side::Enemies => candidates().min_by_key(|&j| (self.units[j].hp, near(j))),
@@ -682,6 +729,7 @@ impl Battle {
         t.hp -= dealt;
         if damage > 0 {
             t.statuses.damaged_on = self.tick;
+            t.statuses.hit_by = Some(attacker);
         }
         events.push(Event::Attacked { attacker, target: victim, damage, crit });
 

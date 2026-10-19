@@ -890,3 +890,72 @@ fn stalemate_ends_in_a_draw_at_the_tick_limit() {
     assert_eq!(b.run_to_end(), Outcome::Draw);
     assert_eq!(b.tick(), 5);
 }
+
+// ----- The `it` target ---------------------------------------------------
+
+#[test]
+fn it_targets_the_enemy_the_condition_spotted() {
+    // A healthy enemy is nearer, but `enemy weak -> Attack it` hits the weak one.
+    let mut b = battle(4, 1);
+    let pip =
+        add(&mut b, Team::Player, 0, 0, PipQuickfeather, &[card(EnemyWeak, Attack(Target::It))]);
+    let near = dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
+    let weak = dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
+    unit_mut(&mut b, weak).hp = max_hp_of(BramGatewarden) / 5;
+    let events = b.step();
+    assert_eq!(first_fired(&events, pip), Some(CardRef::Node(0)));
+    assert!(damage_to(&events, near).is_empty());
+    assert_eq!(damage_to(&events, weak).len(), 1);
+}
+
+#[test]
+fn heal_it_heals_the_ally_the_condition_spotted() {
+    let mut b = battle(3, 1);
+    let agnes = add(
+        &mut b,
+        Team::Player,
+        0,
+        0,
+        SisterAgnes,
+        &[card(AllyHpBelow(Threshold::P50), Heal(Target::It))],
+    );
+    let hurt = dummy(&mut b, Team::Player, 1, 0, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 2, 0, BramGatewarden);
+    unit_mut(&mut b, hurt).hp = max_hp_of(BramGatewarden) / 3;
+    let events = b.step();
+    assert_eq!(first_fired(&events, agnes), Some(CardRef::Node(0)));
+    assert!(healed(&events, hurt) > 0);
+}
+
+#[test]
+fn was_hit_it_strikes_back_at_the_attacker() {
+    // Both enemies are adjacent; the dummy has the lower id, so `nearest`
+    // would pick it. `it` picks Grub, who did the hitting.
+    let mut b = battle(3, 2);
+    let bram = add(&mut b, Team::Player, 1, 0, BramGatewarden, &[card(WasHit, Attack(Target::It))]);
+    let bystander = dummy(&mut b, Team::Enemy, 0, 0, BramGatewarden);
+    let grub = add(&mut b, Team::Enemy, 2, 0, Grub, &[]);
+    unit_mut(&mut b, bystander).hp = 100_000;
+    unit_mut(&mut b, grub).hp = 100_000;
+    b.step(); // Bram isn't hit yet, so he attacks the nearest; then Grub hits him.
+    let events = b.step();
+    assert_eq!(first_fired(&events, bram), Some(CardRef::Node(0)));
+    assert_eq!(damage_to(&events, grub).len(), 1);
+    assert!(damage_to(&events, bystander).is_empty());
+}
+
+#[test]
+fn it_needs_a_condition_that_spots_the_right_side() {
+    let no_subject = Program::new([card(Always, Attack(Target::It))]);
+    assert_eq!(
+        no_subject.validate_basic(PipQuickfeather),
+        Err(ProgramError::NoSubject { index: 0 })
+    );
+    let wrong_side = Program::new([card(EnemyWeak, Heal(Target::It))]);
+    assert_eq!(wrong_side.validate_basic(SisterAgnes), Err(ProgramError::NoSubject { index: 0 }));
+    let fine = Program::new([
+        card(AllyHpBelow(Threshold::P50), Heal(Target::It)),
+        card(EnemyAdjacent, Attack(Target::It)),
+    ]);
+    assert_eq!(fine.validate_basic(SisterAgnes), Ok(()));
+}

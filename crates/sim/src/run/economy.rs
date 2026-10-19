@@ -39,10 +39,16 @@ pub const XP_PER_ROUND: u32 = 2;
 pub const XP_COST: u32 = 4;
 pub const XP_PER_BUY: u32 = 4;
 
-/// Battlefield size, and the columns the player may place units in.
-pub const BOARD_WIDTH: i32 = 8;
-pub const BOARD_HEIGHT: i32 = 5;
-pub const PLAYER_COLUMNS: i32 = 4;
+/// Battlefield size. In sim coordinates `x` runs from the player's back row
+/// (0) to the enemy's back row (`BOARD_DEPTH - 1`), and `y` is the lane. The
+/// game draws it rotated: lanes across the screen, the enemy half above.
+pub const BOARD_DEPTH: i32 = 8;
+/// Lanes: how wide the board is on screen.
+pub const BOARD_LANES: i32 = 7;
+/// Rows of each side's half: the player owns `x` in `0..SIDE_DEPTH`.
+pub const SIDE_DEPTH: i32 = 4;
+/// Lanes from the middle outwards, for placing units automatically.
+pub const LANES_FROM_CENTRE: [i32; BOARD_LANES as usize] = [3, 2, 4, 1, 5, 0, 6];
 /// Ticks before an undecided battle is called a draw.
 pub const MAX_TICKS: u32 = 200;
 
@@ -127,6 +133,14 @@ impl Income {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lanes_from_centre_covers_every_lane_once() {
+        let mut lanes = LANES_FROM_CENTRE;
+        assert_eq!(lanes[0], BOARD_LANES / 2);
+        lanes.sort_unstable();
+        assert!(lanes.iter().copied().eq(0..BOARD_LANES));
+    }
 
     #[test]
     fn interest_is_capped() {

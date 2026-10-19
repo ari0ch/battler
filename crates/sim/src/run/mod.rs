@@ -165,7 +165,7 @@ impl BattleSetup {
     /// Builds the battle. Units spawn alternating between the sides (home,
     /// away, home, ...), so neither side always acts first within a tick.
     pub fn build(&self) -> Battle {
-        let mut battle = Battle::new(BOARD_WIDTH, BOARD_HEIGHT, MAX_TICKS, self.seed);
+        let mut battle = Battle::new(BOARD_DEPTH, BOARD_LANES, MAX_TICKS, self.seed);
         let longest = self.player.len().max(self.enemy.len());
         for i in 0..longest {
             let pair = [(Team::Player, self.player.get(i)), (Team::Enemy, self.enemy.get(i))];

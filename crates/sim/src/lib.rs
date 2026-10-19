@@ -38,7 +38,7 @@ pub use grid::Pos;
 pub use monster::{Monster, Wave};
 pub use program::{
     Action, CardRef, Condition, MAX_CARDS, Node, Program, ProgramError, Requirement, Scope, Signal,
-    Target, Threshold, Unlocks, WEAK_PERCENT, palette_actions, palette_conditions,
+    Subject, Target, Threshold, Unlocks, WEAK_PERCENT, palette_actions, palette_conditions,
 };
 pub use rng::Rng;
 pub use synergy::Synergies;

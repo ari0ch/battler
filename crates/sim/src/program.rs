@@ -84,6 +84,10 @@ pub enum Condition {
 /// How an action picks its target. Ties break by distance, then unit id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Target {
+    /// The unit the card's condition spotted: the weak enemy for `enemy weak`,
+    /// the hurt ally for `ally HP below`, the attacker for `was hit`, and so on.
+    /// Only valid after a condition that spots a unit on the action's side.
+    It,
     Nearest,
     /// Enemies: the least current HP. Allies: the most hurt by percentage.
     Weakest,
@@ -191,15 +195,53 @@ impl Condition {
 impl Target {
     pub fn requirement(self) -> Requirement {
         match self {
-            Target::Nearest | Target::Weakest => Requirement::Start,
+            Target::It | Target::Nearest | Target::Weakest => Requirement::Start,
             Target::Strongest => Requirement::PlayerLevel(4),
             Target::Ranged => Requirement::PlayerLevel(5),
             Target::Marked => Requirement::Synergy(Class::Ranger, Scope::Team),
         }
     }
 
-    pub const ALL: [Target; 5] =
-        [Target::Nearest, Target::Weakest, Target::Strongest, Target::Ranged, Target::Marked];
+    pub const ALL: [Target; 6] = [
+        Target::It,
+        Target::Nearest,
+        Target::Weakest,
+        Target::Strongest,
+        Target::Ranged,
+        Target::Marked,
+    ];
+}
+
+/// Which side of the battle a unit is on, relative to the acting unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subject {
+    Enemy,
+    Ally,
+}
+
+impl Condition {
+    /// The kind of unit this condition spots when it holds, which an action can
+    /// then target as `it`. `None` for conditions about the unit itself or the
+    /// battle as a whole (`always`, `my HP below`, `outnumbered`...).
+    pub fn subject(self) -> Option<Subject> {
+        use Condition::*;
+        match self {
+            EnemyAdjacent | EnemyInRange | EnemyWeak | WasHit | EnemiesGrouped | EnemyIsolated => {
+                Some(Subject::Enemy)
+            }
+            AllyHpBelow(_) | AllyAttacked => Some(Subject::Ally),
+            Always | MyHpBelow(_) | Outnumbered | Surrounded | SignalReceived(_) => None,
+        }
+    }
+}
+
+impl Node {
+    /// True if the action targets `it` but the condition can't supply a unit
+    /// on the right side (e.g. `enemy weak -> Heal it`).
+    pub fn it_without_subject(&self) -> bool {
+        let side = if self.action.targets_allies() { Subject::Ally } else { Subject::Enemy };
+        self.action.target() == Some(Target::It) && self.condition.subject() != Some(side)
+    }
 }
 
 impl Action {
@@ -419,6 +461,9 @@ impl Program {
             {
                 return Err(ProgramError::NotThisCharacter { index, ability });
             }
+            if node.it_without_subject() {
+                return Err(ProgramError::NoSubject { index });
+            }
         }
         Ok(())
     }
@@ -450,9 +495,22 @@ impl Program {
 /// Why a program can't be used by a unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgramError {
-    TooManyCards { max: usize, got: usize },
-    NotThisCharacter { index: usize, ability: Ability },
-    Locked { index: usize, requirement: Requirement },
+    TooManyCards {
+        max: usize,
+        got: usize,
+    },
+    /// The card targets `it`, but its condition doesn't spot a suitable unit.
+    NoSubject {
+        index: usize,
+    },
+    NotThisCharacter {
+        index: usize,
+        ability: Ability,
+    },
+    Locked {
+        index: usize,
+        requirement: Requirement,
+    },
 }
 
 impl fmt::Display for ProgramError {
@@ -461,6 +519,11 @@ impl fmt::Display for ProgramError {
             ProgramError::TooManyCards { max, got } => {
                 write!(f, "{got} cards, but this unit can hold {max}")
             }
+            ProgramError::NoSubject { index } => write!(
+                f,
+                "card {}: 'it' needs a condition that spots a unit of the right side",
+                index + 1
+            ),
             ProgramError::NotThisCharacter { index, ability } => {
                 write!(f, "card {}: {ability:?} belongs to another character", index + 1)
             }

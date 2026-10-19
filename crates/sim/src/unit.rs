@@ -150,6 +150,8 @@ pub struct Statuses {
     pub hunters_marked: bool,
     /// The last tick this unit took damage (0 = never).
     pub damaged_on: u32,
+    /// Who dealt that damage: `was hit -> Attack it` strikes back at them.
+    pub hit_by: Option<UnitId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

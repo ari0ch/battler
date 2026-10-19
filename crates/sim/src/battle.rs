@@ -151,6 +151,9 @@ pub struct Battle {
     /// Whether each team's Resurrection has been used.
     pub(crate) resurrection_used: [bool; 2],
     /// Set while an Arcane Surge ability resolves: its hits crit.
+    /// The unit the running card's condition spotted: the action's `it`.
+    /// Set only while that card's action runs.
+    pub(crate) it: Option<usize>,
     pub(crate) force_crit: bool,
     started: bool,
 }
@@ -176,6 +179,7 @@ impl Battle {
             ranger_mark: [None; 2],
             resurrection_used: [false; 2],
             force_crit: false,
+            it: None,
             started: false,
         }
     }

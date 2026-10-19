@@ -11,7 +11,10 @@ use crate::{
     Ability, Action, Class, Condition::*, Node, Passive, Pos, Program, Stats, Target, Threshold,
     UnitSpec,
 };
-use crate::{Level, run::economy::BOARD_WIDTH};
+use crate::{
+    Level,
+    run::economy::{BOARD_DEPTH, BOARD_LANES},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Monster {
@@ -190,19 +193,22 @@ impl Wave {
     /// player); battles mirror it onto the right.
     pub fn units(self) -> Vec<(Pos, UnitSpec)> {
         use Monster::*;
-        let at = |x, y, m: Monster| (Pos::new(x, y), m);
+        // Formations are written as (row, lane offset from the middle lane).
+        let at = |x, dy: i32, m: Monster| (Pos::new(x, BOARD_LANES / 2 + dy), m);
         let list = match self {
-            Wave::Slimes => vec![at(3, 1, Slime), at(3, 2, Slime), at(3, 3, Slime)],
-            Wave::Wolves => vec![at(3, 0, Wolf), at(3, 1, Wolf), at(3, 3, Wolf), at(3, 4, Wolf)],
+            Wave::Slimes => vec![at(3, -1, Slime), at(3, 0, Slime), at(3, 1, Slime)],
+            Wave::Wolves => {
+                vec![at(3, -2, Wolf), at(3, -1, Wolf), at(3, 1, Wolf), at(3, 2, Wolf)]
+            }
             Wave::Goblins => {
-                vec![at(3, 2, GoblinBrute), at(0, 1, GoblinArcher), at(0, 3, GoblinArcher)]
+                vec![at(3, 0, GoblinBrute), at(0, -1, GoblinArcher), at(0, 1, GoblinArcher)]
             }
             Wave::Boss { boss: OgreChieftain, .. } => {
-                vec![at(3, 2, OgreChieftain), at(3, 0, GoblinBrute), at(3, 4, GoblinBrute)]
+                vec![at(3, 0, OgreChieftain), at(3, -2, GoblinBrute), at(3, 2, GoblinBrute)]
             }
-            Wave::Boss { boss: FrostWyrm, .. } => vec![at(2, 2, FrostWyrm)],
+            Wave::Boss { boss: FrostWyrm, .. } => vec![at(2, 0, FrostWyrm)],
             Wave::Boss { boss, .. } => {
-                vec![at(0, 2, boss), at(3, 1, Skeleton), at(3, 2, Skeleton), at(3, 3, Skeleton)]
+                vec![at(0, 0, boss), at(3, -1, Skeleton), at(3, 0, Skeleton), at(3, 1, Skeleton)]
             }
         };
         let tier = match self {
@@ -224,7 +230,7 @@ pub const BOSS_TIER_BOOST: u32 = 80;
 
 /// Mirrors a position from a player's half onto the right half of the battlefield.
 pub fn mirror(pos: Pos) -> Pos {
-    Pos::new(BOARD_WIDTH - 1 - pos.x, pos.y)
+    Pos::new(BOARD_DEPTH - 1 - pos.x, pos.y)
 }
 
 #[cfg(test)]
