@@ -206,14 +206,31 @@ impl Tally {
     }
 }
 
+/// Screen time of one round in seconds, with every timer running out: the
+/// planning timer (`planning_seconds` in the game crate), the battle at 0.5 s a
+/// tick plus a 1.2 s end pause, and the 10 s result screen. An upper bound:
+/// players can press Ready and skip the result screen.
+fn round_seconds(units_owned: usize, ticks: u32) -> f64 {
+    let planning = if units_owned >= 5 { 75.0 } else { 60.0 };
+    planning + f64::from(ticks) * 0.5 + 1.2 + 10.0
+}
+
 fn full_lobbies(lobbies: u64) {
     let mut rounds = Vec::new();
+    // Minutes the winner spends in the lobby, and the average over all players.
+    let (mut winner_minutes, mut player_minutes) = (Vec::new(), Vec::new());
     let mut naive_placements = Vec::new();
     let mut pve = Tally::default();
     let mut levels_at = [(7u32, 0u32, 0u32), (11, 0, 0), (15, 0, 0)];
     for seed in 0..lobbies {
         let mut lobby = Lobby::new(seed, 1);
+        let mut seconds = [0.0f64; 8];
         while !lobby.is_over() {
+            let owned: Vec<(bool, usize)> = lobby
+                .players()
+                .iter()
+                .map(|p| (p.is_alive(), p.board().len() + p.bench().iter().flatten().count()))
+                .collect();
             if lobby.player(ME).is_alive() {
                 naive_turn(&mut lobby);
             }
@@ -225,9 +242,19 @@ fn full_lobbies(lobbies: u64) {
             }
             lobby.start_round().unwrap();
             lobby.resolve();
+            for (i, p) in lobby.players().iter().enumerate() {
+                if let (true, units) = owned[i]
+                    && let Some((_, r)) = p.history().last()
+                {
+                    seconds[i] += round_seconds(units, r.ticks);
+                }
+            }
             assert!(lobby.round() < 200, "lobby {seed} never ended");
         }
         rounds.push(lobby.round());
+        let winner = lobby.players().iter().position(|p| p.placement() == Some(1)).unwrap();
+        winner_minutes.push(seconds[winner] / 60.0);
+        player_minutes.extend(seconds.iter().map(|s| s / 60.0));
         naive_placements.push(lobby.player(ME).placement().unwrap());
         for p in lobby.players().iter().skip(1) {
             for (_, r) in p.history() {
@@ -257,6 +284,13 @@ fn full_lobbies(lobbies: u64) {
         100.0 * naive_placements.iter().filter(|&&p| p <= 4).count() as f64 / n
     );
     println!();
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    println!(
+        "Game length with every timer running out: the winner plays {:.1} minutes on \
+         average; the average player {:.1} minutes.\n",
+        mean(&winner_minutes),
+        mean(&player_minutes)
+    );
     println!(
         "Average bot-lobby player level: {}.\n",
         levels_at

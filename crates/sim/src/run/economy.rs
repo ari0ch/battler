@@ -27,6 +27,8 @@ pub const MONSTER_REWARD: u32 = 2;
 pub const BOSS_REWARD: u32 = 4;
 /// HP lost to a monster round. Boss losses scale with the round instead.
 pub const MONSTER_LOSS_DAMAGE: u32 = 2;
+/// A boss loss costs this much more than a versus round's base damage.
+pub const BOSS_EXTRA_DAMAGE: u32 = 5;
 
 /// Player levels. Board size equals the player's level.
 pub const START_LEVEL: u32 = 3;
@@ -83,14 +85,23 @@ pub fn streak_bonus(length: u32) -> u32 {
     }
 }
 
-/// HP lost when a battle is lost: 2 plus the levels of the enemy units still alive.
-pub fn loss_damage(surviving_enemy_levels: u32) -> u32 {
-    2 + surviving_enemy_levels
+/// The part of a loss's damage that depends only on the round: 2 + round +
+/// round²/6. Gentle early (8 at round 4) and steep late (54 at round 15), which
+/// keeps lobbies to about 16 rounds (see `docs/DESIGN.md`, Playtest notes).
+pub fn round_damage(round: u32) -> u32 {
+    2 + round + round * round / 6
 }
 
-/// HP lost when a PvE round is lost.
+/// HP lost when a versus battle is lost: the round's damage plus the levels of
+/// the enemy units still alive, so a narrow loss hurts less than a wipe.
+pub fn loss_damage(round: u32, surviving_enemy_levels: u32) -> u32 {
+    round_damage(round) + surviving_enemy_levels
+}
+
+/// HP lost when a PvE round is lost: a flat amount to monsters; to a boss, more
+/// than a versus loss in the same round would cost.
 pub fn pve_loss_damage(boss: bool, round: u32) -> u32 {
-    if boss { 2 + round } else { MONSTER_LOSS_DAMAGE }
+    if boss { round_damage(round) + BOSS_EXTRA_DAMAGE } else { MONSTER_LOSS_DAMAGE }
 }
 
 /// Gold for winning a PvE round.
@@ -127,6 +138,23 @@ mod tests {
     #[test]
     fn streak_bonus_steps() {
         assert_eq!([1, 2, 3, 4, 5, 6, 9].map(streak_bonus), [0, 1, 1, 2, 2, 3, 3]);
+    }
+
+    #[test]
+    fn loss_damage_starts_gentle_and_steepens() {
+        assert_eq!([4, 8, 12, 15].map(round_damage), [8, 20, 38, 54]);
+        assert_eq!(loss_damage(4, 3), 11);
+        // Each round costs more than the one before, by a growing amount.
+        let steps: Vec<u32> = (4..20).map(|r| round_damage(r + 1) - round_damage(r)).collect();
+        assert!(steps.windows(2).all(|w| w[1] >= w[0]));
+    }
+
+    #[test]
+    fn boss_losses_cost_more_than_versus_losses() {
+        for round in [7, 11, 15, 19] {
+            assert!(pve_loss_damage(true, round) > loss_damage(round, 0));
+        }
+        assert_eq!(pve_loss_damage(false, 2), MONSTER_LOSS_DAMAGE);
     }
 
     #[test]

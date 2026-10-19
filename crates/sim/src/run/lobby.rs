@@ -305,7 +305,7 @@ impl Lobby {
                     ),
                     Opponent::Ghost(_) => (0, if won { WIN_BONUS } else { 0 }),
                     Opponent::Player(_) => (
-                        if lost { loss_damage(levels(side.opponent())) } else { 0 },
+                        if lost { loss_damage(round, levels(side.opponent())) } else { 0 },
                         if won { WIN_BONUS } else { 0 },
                     ),
                 };

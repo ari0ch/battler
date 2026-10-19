@@ -81,9 +81,12 @@ The skill lies in planning, and in reading why a plan went wrong.
   Frost Wyrm, The Lich, then again, 80% stronger each cycle). Every other round is
   versus: random pairs, avoiding last round's opponent; with an odd number left, one
   player fights a **ghost** (a copy of another living player's board).
-- **Player health:** 100 HP. A versus loss costs **2 + the total level of the enemy
-  units still alive**, so a narrow loss hurts less than a wipe. A draw costs nothing.
-  A monster round loss costs 2; a boss loss costs **2 + the round number**. Losing to a
+- **Player health:** 100 HP. A versus loss costs **round damage + the total level of the
+  enemy units still alive**, where round damage is **2 + round + round²/6** (8 at round
+  4, 20 at round 8, 38 at round 12, 54 at round 15). Gentle early, steep late; chosen in
+  Oct 2026 to bring games down to about 20 minutes. A narrow loss still hurts less than
+  a wipe, and a draw costs nothing. A monster round loss costs 2; a boss loss costs
+  **round damage + 5**, always more than a versus loss in the same round. Losing to a
   ghost costs nothing.
 - **Rewards:** +1 gold for a versus win, +2 for beating monsters, +4 for a boss.
   PvE rounds leave win/loss streaks alone.
@@ -225,6 +228,25 @@ In priority order:
   Lobbies last **28.6 rounds on average** (23 to 35). At about 90 seconds a round, a
   winner plays ~40 minutes. A naive player (buys anything, no merge or synergy plan)
   places 7.5th on average: the bots are much stronger than someone who doesn't plan.
+- **Game length cut to ~20 minutes (Oct 2026).** The harness now estimates screen time
+  with every timer running out (planning 60-75 s, battle at 0.5 s a tick, 10 s result),
+  an upper bound since players can press Ready. Before: winner ~46 min, average player
+  ~36 min. Damage formulas tried (400 lobbies each; R = round, L = surviving enemy levels):
+
+  | Versus loss damage | Avg. rounds | Winner min. | Avg. player min. |
+  |---|---|---|---|
+  | 2 + L (old) | 28.6 | 45.7 | 36.0 |
+  | 2 + R + L | 20.6 | 32.5 | 25.7 |
+  | 3R + L | 15.4 | 24.1 | 19.0 |
+  | 2 + R + R²/8 + L | 16.5 | 25.7 | 20.7 |
+  | **2 + R + R²/6 + L (chosen)** | **15.3** | **23.8** | **19.2** |
+
+  The quadratic curve gets the same length as 3R while costing far less in the early
+  versus rounds. Lengths flatten out around 15 rounds whatever the formula, because the
+  last few players are evenly matched; shorter games from here would need shorter rounds.
+  Side effect: games now end before boards fill out. **Bots average level 6.7 at round
+  15**, so level 8 and Epic-heavy shops are rarely seen; the XP curve may need to speed
+  up to match.
 
 ## Open questions
 
@@ -426,5 +448,6 @@ In rough order. Each item is discussed before it is built.
    one-screen planning layout.
 4. **Viewing other boards:** click a player in the standings to see their board (the
    state is all there; it needs a screen).
-5. **Game length:** lobbies last ~28 rounds (see Playtest notes). If that feels long,
-   add round-based damage to versus losses.
+5. **Done (Oct 2026): game length.** Round-scaled loss damage; ~15 rounds, ~20 minutes.
+6. **XP curve for shorter games:** players rarely reach levels 7-8 before a lobby ends.
+   Consider cheaper levels or more XP per round, checked with the harness.

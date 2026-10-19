@@ -1,6 +1,6 @@
 //! The round result screen, and game over with the run summary.
 
-use battler_sim::run::economy::LOBBY_SIZE;
+use battler_sim::run::economy::{BOSS_EXTRA_DAMAGE, LOBBY_SIZE, round_damage};
 use battler_sim::run::{Lobby, Opponent, RoundReport, RunStatus, round_kind};
 use bevy::prelude::*;
 
@@ -87,9 +87,20 @@ fn damage_note(r: &RoundReport) -> String {
             "Losing to a ghost costs no health.".to_string()
         }
         (_, 0) => "No damage taken.".to_string(),
-        (Opponent::Monsters(w), d) if w.is_boss() => format!("Lost {d} HP: 2 + the round number."),
+        (Opponent::Monsters(w), d) if w.is_boss() => format!(
+            "Lost {d} HP: {} for round {} + {BOSS_EXTRA_DAMAGE} for a boss.",
+            round_damage(r.round),
+            r.round
+        ),
         (Opponent::Monsters(_), d) => format!("Lost {d} HP to the monsters."),
-        (_, d) => format!("Lost {d} HP: 2 + levels of surviving enemies."),
+        (_, d) => {
+            let base = round_damage(r.round);
+            format!(
+                "Lost {d} HP: {base} for round {} + {} for surviving enemy levels.",
+                r.round,
+                d.saturating_sub(base)
+            )
+        }
     }
 }
 
