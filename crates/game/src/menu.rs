@@ -98,12 +98,13 @@ fn rebuild(
 
 const HOW_TO: &[&str] = &[
     "Each round has a timed planning phase, then a battle you watch.",
-    "Buy units in the shop (3 gold). Three copies merge into the next level.",
-    "Drag units onto your half of the board. One of each class at a time.",
-    "Select a unit and press Edit cards to program it.",
-    "A card is: if [condition] then [action]. Each tick a unit runs the first",
-    "card that applies; if none does, it attacks the nearest enemy.",
-    "Drag blocks from the palette into cards. Click a placed block to change",
-    "its setting, such as a threshold or target.",
+    "Buy characters in the shop (1-3 gold by rarity). Three copies merge",
+    "into the next level, which adds a card slot. One copy of each on the board.",
+    "Your player level is your board size. Buy XP to level up: higher levels",
+    "unlock new blocks and rarer characters.",
+    "Click a unit to program it. A card is: if [condition] -> [action].",
+    "Each tick a unit runs the first card that applies; otherwise it attacks",
+    "the nearest enemy. Drag blocks into cards; click one to change it.",
+    "Two of a class on the board unlocks its synergy. Hover anything for details.",
     "Losing a battle costs HP. Unspent gold earns interest. Survive 15 rounds.",
 ];

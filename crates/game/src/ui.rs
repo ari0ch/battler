@@ -59,6 +59,12 @@ pub mod color {
     pub const SIG_TEXT: Color = Color::srgb(0.863, 0.796, 0.949);
     pub const REACH: Color = Color::srgb(0.173, 0.133, 0.251);
     pub const REACH_LINE: Color = Color::srgb(0.431, 0.333, 0.604);
+    pub const COMMON: Color = Color::srgb(0.643, 0.616, 0.702);
+    pub const RARE: Color = Color::srgb(0.353, 0.655, 0.910);
+    pub const EPIC: Color = Color::srgb(0.710, 0.482, 0.910);
+    pub const XP: Color = Color::srgb(0.353, 0.655, 0.910);
+    pub const ACTIVE_FILL: Color = Color::srgb(0.165, 0.141, 0.086);
+    pub const ACTIVE_LINE: Color = Color::srgb(0.420, 0.333, 0.141);
 }
 
 /// A rule-card block: what the palette offers and what card slots hold.
@@ -100,12 +106,15 @@ pub enum UiAction {
     Buy(usize),
     Reroll,
     Ready,
+    BuyXp,
     SelectUnit(Location),
     ClickCell(Pos),
     ClickBench(usize),
+    /// Sell the selected unit.
     Sell,
-    OpenEditor,
-    CloseEditor,
+    /// Sell a specific unit (the E hotkey sells whatever is under the pointer).
+    SellAt(Location),
+    DismissNotice,
     PaletteBlock(Block),
     /// Clicking a filled slot cycles its setting (threshold, target...).
     CycleSlot(usize, Slot),
@@ -127,6 +136,14 @@ pub struct Clickable(pub UiAction);
 #[derive(Resource, Default)]
 pub struct ActionQueue(pub Vec<UiAction>);
 
+/// Hover text for any element that also has [`Hovered`].
+#[derive(Component, Debug, Clone)]
+pub struct Tooltip {
+    pub title: String,
+    pub accent: Color,
+    pub lines: Vec<(String, Color)>,
+}
+
 /// Background colours for hover feedback.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct HoverColors {
@@ -144,7 +161,8 @@ impl Plugin for UiPlugin {
             .add_observer(on_drag)
             .add_observer(on_drag_end)
             .add_observer(on_drop)
-            .add_systems(Update, (fit_ui_to_window, hover_colors));
+            .add_systems(Startup, spawn_tooltip)
+            .add_systems(Update, (fit_ui_to_window, hover_colors, update_tooltip));
     }
 }
 
@@ -208,6 +226,74 @@ fn fit_ui_to_window(window: Single<&Window, With<PrimaryWindow>>, mut scale: Res
 fn hover_colors(mut q: Query<(&Hovered, &HoverColors, &mut BackgroundColor), Changed<Hovered>>) {
     for (hovered, colors, mut bg) in &mut q {
         bg.0 = if hovered.get() { colors.hover } else { colors.normal };
+    }
+}
+
+#[derive(Component)]
+struct TooltipRoot;
+
+/// One floating tooltip panel, shared by every [`Tooltip`] element.
+fn spawn_tooltip(mut commands: Commands) {
+    commands.spawn((
+        TooltipRoot,
+        Node {
+            position_type: PositionType::Absolute,
+            display: Display::None,
+            width: px(TOOLTIP_W),
+            padding: UiRect::all(px(12)),
+            flex_direction: FlexDirection::Column,
+            row_gap: px(5),
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(10)),
+            ..default()
+        },
+        BackgroundColor(color::PANEL),
+        BorderColor::all(color::LINE_STRONG),
+        GlobalZIndex(1000),
+        Pickable::IGNORE,
+    ));
+}
+
+const TOOLTIP_W: f32 = 300.0;
+
+/// Shows the tooltip of whatever [`Tooltip`] element is hovered, next to the pointer.
+fn update_tooltip(
+    mut commands: Commands,
+    window: Single<&Window, With<PrimaryWindow>>,
+    scale: Res<UiScale>,
+    hovered: Query<(Entity, &Hovered, &Tooltip)>,
+    root: Single<(Entity, &mut Node, &mut BorderColor), With<TooltipRoot>>,
+    mut showing: Local<Option<Entity>>,
+) {
+    let (root_entity, mut node, mut border) = root.into_inner();
+    let target = hovered.iter().find(|(_, h, _)| h.get());
+    let (Some((entity, _, tip)), Some(cursor)) = (target, window.cursor_position()) else {
+        node.display = Display::None;
+        *showing = None;
+        return;
+    };
+    let s = scale.0.max(0.01);
+    // `Val::Px` is in UI units, which UiScale multiplies; the cursor is in window pixels.
+    let (mut x, mut y) = (cursor.x / s + 16.0, cursor.y / s + 16.0);
+    let (w, h) = (window.width() / s, window.height() / s);
+    if x + TOOLTIP_W > w {
+        x = (cursor.x / s - TOOLTIP_W - 12.0).max(0.0);
+    }
+    if y + 160.0 > h {
+        y = (h - 170.0).max(0.0);
+    }
+    node.display = Display::Flex;
+    node.left = px(x);
+    node.top = px(y);
+    if *showing != Some(entity) {
+        *showing = Some(entity);
+        border.set_all(tip.accent);
+        commands.entity(root_entity).despawn_children().with_children(|t| {
+            t.spawn(text(tip.title.clone(), 15.0, color::TEXT));
+            for (line, ink) in &tip.lines {
+                t.spawn(text(line.clone(), 12.0, *ink));
+            }
+        });
     }
 }
 

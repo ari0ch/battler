@@ -123,14 +123,20 @@ fn planning_action(
                 && planning.selected.is_none()
             {
                 planning.selected = Some(id);
+                editor::load_draft(run, planning);
             }
         }
+        UiAction::BuyXp => {
+            if let Some(levels) = report(planning, run.buy_xp()) {
+                planning.level_up(&levels);
+            }
+        }
+        UiAction::DismissNotice => planning.notice = None,
         UiAction::Reroll => {
             report(planning, run.reroll());
         }
         UiAction::Ready => {
             if let Some(setup) = report(planning, run.start_battle()) {
-                planning.editor_open = false;
                 commands.insert_resource(Playback::new(setup, false));
                 if let Some(next) = next_phase {
                     next.set(RunPhase::Battle);
@@ -138,28 +144,20 @@ fn planning_action(
             }
         }
         UiAction::SelectUnit(loc) => {
-            planning.selected = run.unit_at(loc).map(|u| u.id);
-            if planning.editor_open {
+            let picked = run.unit_at(loc).map(|u| u.id);
+            if planning.selected != picked {
+                planning.selected = picked;
                 editor::load_draft(run, planning);
             }
         }
         UiAction::ClickCell(p) => move_selected_to(run, planning, Location::Board(p)),
         UiAction::ClickBench(i) => move_selected_to(run, planning, Location::Bench(i)),
         UiAction::Sell => {
-            if let Some(loc) = selected_loc(run, planning)
-                && report(planning, run.sell(loc)).is_some()
-            {
-                planning.selected = None;
-                planning.editor_open = false;
+            if let Some(loc) = selected_loc(run, planning) {
+                sell(run, planning, loc);
             }
         }
-        UiAction::OpenEditor => {
-            if selected_loc(run, planning).is_some() {
-                planning.editor_open = true;
-                editor::load_draft(run, planning);
-            }
-        }
-        UiAction::CloseEditor => planning.editor_open = false,
+        UiAction::SellAt(loc) => sell(run, planning, loc),
         UiAction::PaletteBlock(block) => editor::click_block(run, planning, block),
         UiAction::CycleSlot(card, slot) => editor::cycle_slot(run, planning, card, slot),
         UiAction::ClearCard(card) => editor::clear_card(run, planning, card),
@@ -173,13 +171,7 @@ fn planning_action(
             (DragSource::Unit(from), DropTarget::Bench(i)) => {
                 report(planning, run.move_unit(from, Location::Bench(i)));
             }
-            (DragSource::Unit(from), DropTarget::Sell) => {
-                let sold = run.unit_at(from).map(|u| u.id);
-                if report(planning, run.sell(from)).is_some() && planning.selected == sold {
-                    planning.selected = None;
-                    planning.editor_open = false;
-                }
-            }
+            (DragSource::Unit(from), DropTarget::Sell) => sell(run, planning, from),
             (DragSource::Block(block), DropTarget::Card(card, slot)) => {
                 editor::drop_block(run, planning, card, slot, block)
             }
@@ -187,8 +179,17 @@ fn planning_action(
         },
         _ => {}
     }
-    // Keep the editor pointed at a unit that still exists.
-    if planning.editor_open && selected_loc(run, planning).is_none() {
-        planning.editor_open = false;
+    // Keep the selection pointed at a unit that still exists (merges remove copies).
+    if planning.selected.is_some() && selected_loc(run, planning).is_none() {
+        planning.selected = None;
+        planning.draft.clear();
+    }
+}
+
+fn sell(run: &mut Run, planning: &mut Planning, loc: Location) {
+    let sold = run.unit_at(loc).map(|u| u.id);
+    if report(planning, run.sell(loc)).is_some() && planning.selected == sold {
+        planning.selected = None;
+        planning.draft.clear();
     }
 }

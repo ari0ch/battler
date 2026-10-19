@@ -69,11 +69,15 @@ pub struct DraftCard {
     pub act: Option<Action>,
 }
 
+/// Seconds a level-up notice stays up.
+pub const NOTICE_SECS: f32 = 5.0;
+
 /// Planning screen UI state.
 #[derive(Resource, Default)]
 pub struct Planning {
     pub selected: Option<OwnedId>,
-    pub editor_open: bool,
+    /// A level-up notice: the level reached and seconds left to show it.
+    pub notice: Option<(u32, f32)>,
     /// Seconds left on the planning timer.
     pub time_left: f32,
     /// A short message (usually why something was refused) and seconds left to show it.
@@ -85,5 +89,12 @@ pub struct Planning {
 impl Planning {
     pub fn toast(&mut self, message: impl Into<String>) {
         self.toast = Some((message.into(), 2.5));
+    }
+
+    /// Shows a notice for the highest level reached, if any.
+    pub fn level_up(&mut self, levels: &[u32]) {
+        if let Some(&level) = levels.last() {
+            self.notice = Some((level, NOTICE_SECS));
+        }
     }
 }

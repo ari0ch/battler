@@ -4,7 +4,8 @@ use battler_sim::run::{RoundReport, RunStatus};
 use battler_sim::{Outcome, Team};
 use bevy::prelude::*;
 
-use crate::planning::{class_letter, spawn_pips};
+use crate::cards;
+use crate::planning::spawn_pips;
 use crate::state::{AppState, GameRun, LastReport, Rev, RunPhase};
 use crate::ui::{
     self, ActionQueue, PRIMARY, SECONDARY, UiAction, color, column, row, spawn_button, text,
@@ -209,7 +210,13 @@ fn rebuild_result(
                 card.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(20.0) })
                     .with_children(|f| {
                         let next = match r.status {
-                            RunStatus::Planning => format!("Next: round {}", r.round + 1),
+                            RunStatus::Planning => match r.level_ups.last() {
+                                Some(level) => format!(
+                                    "Next: round {} - you reached level {level}!",
+                                    r.round + 1
+                                ),
+                                None => format!("Next: round {}", r.round + 1),
+                            },
                             RunStatus::Victory => "You survived every round!".to_string(),
                             RunStatus::Defeat => "Your warband has fallen.".to_string(),
                         };
@@ -321,7 +328,11 @@ fn rebuild_game_over(
                                 BorderColor::all(color::BLUE),
                             ))
                             .with_children(|t| {
-                                t.spawn(text(class_letter(unit.class), 17.0, color::BLUE_TEXT));
+                                t.spawn(text(
+                                    cards::initials(unit.character),
+                                    16.0,
+                                    color::BLUE_TEXT,
+                                ));
                                 spawn_pips(t, unit.level);
                             });
                         }

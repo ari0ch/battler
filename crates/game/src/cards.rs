@@ -1,20 +1,36 @@
-//! Card wording, the block palette per class, and "click to cycle" settings.
+//! Words and help text for blocks, characters and synergies, the palette for a
+//! character, "click to cycle" settings, and tooltip builders.
 //! Text is plain ASCII because Bevy's built-in font only covers ASCII.
 
 use battler_sim::{
-    Ability, Action, Class, Condition, Level, Node, Program, Signal, Target, Threshold,
+    Ability, Action, Character, Class, Condition, Level, Node, Program, Rarity, Requirement, Scope,
+    Signal, Synergies, Target, Threshold, Unlocks, palette_actions, palette_conditions,
 };
+use bevy::prelude::Color;
 
 use crate::state::DraftCard;
-use crate::ui::Block;
+use crate::ui::{Block, Tooltip, color};
+
+/// Two letters for unit tiles until there's art.
+pub fn initials(c: Character) -> String {
+    c.short_name().chars().take(2).collect()
+}
+
+pub fn rarity_color(r: Rarity) -> Color {
+    match r {
+        Rarity::Common => color::COMMON,
+        Rarity::Rare => color::RARE,
+        Rarity::Epic => color::EPIC,
+    }
+}
 
 pub fn target_label(t: Target) -> &'static str {
     match t {
         Target::Nearest => "nearest",
-        Target::LowestHp => "lowest HP",
-        Target::HighestHp => "highest HP",
+        Target::Weakest => "weakest",
         Target::Strongest => "strongest",
         Target::Ranged => "ranged",
+        Target::Marked => "marked",
     }
 }
 
@@ -26,33 +42,92 @@ fn signal_label(s: Signal) -> &'static str {
 }
 
 pub fn ability_label(a: Ability) -> &'static str {
+    use Ability::*;
     match a {
-        Ability::Taunt => "Taunt",
-        Ability::ShieldWall => "Shield Wall",
-        Ability::AimedShot => "Aimed Shot",
-        Ability::Kite => "Kite",
-        Ability::Fireball => "Fireball",
-        Ability::Blink => "Blink",
-        Ability::Heal => "Heal",
-        Ability::Sanctuary => "Sanctuary",
-        Ability::Backstab => "Backstab",
-        Ability::Shadowstep => "Shadowstep",
-        Ability::Frenzy => "Frenzy",
-        Ability::Cleave => "Cleave",
+        Taunt => "Taunt",
+        ShieldWall => "Shield Wall",
+        SecondWind => "Second Wind",
+        AimedShot => "Aimed Shot",
+        Kite => "Kite",
+        Volley => "Volley",
+        Firebolt => "Firebolt",
+        FrostNova => "Frost Nova",
+        Fireball => "Fireball",
+        Blink => "Blink",
+        Heal => "Heal",
+        Sanctuary => "Sanctuary",
+        MassHeal => "Mass Heal",
+        Backstab => "Backstab",
+        Shadowstep => "Shadowstep",
+        Assassinate => "Assassinate",
+        Frenzy => "Frenzy",
+        Cleave => "Cleave",
+        Rampage => "Rampage",
+    }
+}
+
+pub fn ability_help(a: Ability) -> &'static str {
+    use Ability::*;
+    match a {
+        Taunt => "Enemies within 2 cells must target this unit for 3 ticks.",
+        ShieldWall => "This unit and adjacent allies take half damage for 2 ticks.",
+        SecondWind => "Heal yourself for 30% of max HP. Falls through at full HP.",
+        AimedShot => "Double damage, range +1.",
+        Kite => "Attack, then step away from the nearest enemy.",
+        Volley => "Half damage to every enemy in range.",
+        Firebolt => "A 2.5x damage bolt at a target in range.",
+        FrostNova => "Half damage to adjacent enemies; each loses its next turn.",
+        Fireball => "Hits the target, plus half damage to enemies next to it.",
+        Blink => "Teleport up to 3 cells to the spot furthest from enemies.",
+        Heal => "Restore 4x attack in HP to an ally in range +1. Falls through if unhurt.",
+        Sanctuary => "An ally in range +1 is immune to damage for 2 ticks.",
+        MassHeal => "Restore 2x attack in HP to every ally. Falls through if nobody is hurt.",
+        Backstab => "Triple damage on an adjacent enemy that is next to one of your allies.",
+        Shadowstep => "Teleport next to an enemy within 4 cells, on its far side.",
+        Assassinate => "Teleport to an enemy below 25% HP within 3 cells and strike for 3x.",
+        Frenzy => "For 4 ticks, basic attacks strike twice.",
+        Cleave => "Hit every adjacent enemy.",
+        Rampage => "Frenzy and Cleave at once. Needs an adjacent enemy.",
     }
 }
 
 pub fn cond_label(c: Condition) -> String {
+    use Condition::*;
     match c {
-        Condition::Always => "always".into(),
-        Condition::EnemyAdjacent => "enemy adjacent".into(),
-        Condition::EnemyInRange => "enemy in range".into(),
-        Condition::MyHpBelow(t) => format!("my HP < {}%", t.percent()),
-        Condition::AllyHpBelow(t) => format!("ally HP < {}%", t.percent()),
-        Condition::Outnumbered => "outnumbered".into(),
-        Condition::AbilityReady(a) => format!("{} ready", ability_label(a)),
-        Condition::EveryNTicks(n) => format!("every {n} ticks"),
-        Condition::SignalReceived(s) => format!("signal: {}", signal_label(s)),
+        Always => "always".into(),
+        EnemyAdjacent => "enemy adjacent".into(),
+        EnemyInRange => "enemy in range".into(),
+        MyHpBelow(t) => format!("my HP < {}%", t.percent()),
+        AllyHpBelow(t) => format!("ally HP < {}%", t.percent()),
+        Outnumbered => "outnumbered".into(),
+        EnemyWeak => "enemy weak".into(),
+        WasHit => "I was hit".into(),
+        AllyAttacked => "ally attacked".into(),
+        EnemiesGrouped => "enemies grouped".into(),
+        EnemyIsolated => "enemy isolated".into(),
+        Surrounded => "surrounded".into(),
+        SignalReceived(s) => format!("signal: {}", signal_label(s)),
+    }
+}
+
+pub fn cond_help(c: Condition) -> String {
+    use Condition::*;
+    match c {
+        Always => "Always true. An empty condition slot means always.".into(),
+        EnemyAdjacent => "An enemy is next to this unit.".into(),
+        EnemyInRange => "An enemy is within this unit's attack range.".into(),
+        MyHpBelow(t) => format!("This unit is below {}% HP. Click to change.", t.percent()),
+        AllyHpBelow(t) => format!("Another ally is below {}% HP. Click to change.", t.percent()),
+        Outnumbered => "More enemies than allies within 2 cells.".into(),
+        EnemyWeak => format!("An enemy in range is below {}% HP.", battler_sim::WEAK_PERCENT),
+        WasHit => "This unit took damage since its last turn.".into(),
+        AllyAttacked => "An adjacent ally took damage since its last turn.".into(),
+        EnemiesGrouped => "An enemy in range has another enemy next to it.".into(),
+        EnemyIsolated => "Some enemy has none of its allies within 2 cells.".into(),
+        Surrounded => "Two or more enemies are adjacent.".into(),
+        SignalReceived(_) => {
+            "A teammate sent this signal last tick. Click to change colour.".into()
+        }
     }
 }
 
@@ -62,11 +137,9 @@ pub fn action_name(a: Action) -> String {
         return ability_label(ability).into();
     }
     match a {
-        Action::Advance(_) => "Advance".into(),
         Action::Attack(_) => "Attack".into(),
         Action::Guard => "Guard".into(),
         Action::Retreat => "Retreat".into(),
-        Action::Hold => "Hold".into(),
         Action::ProtectAlly(_) => "Protect Ally".into(),
         Action::SendSignal(s) => format!("Signal {}", signal_label(s)),
         _ => "?".into(),
@@ -77,6 +150,27 @@ pub fn action_label(a: Action) -> String {
     match a.target() {
         Some(t) => format!("{} > {}", action_name(a), target_label(t)),
         None => action_name(a),
+    }
+}
+
+pub fn action_help(a: Action) -> String {
+    let base = if let Some(ability) = a.ability() {
+        format!("{} Cooldown {} ticks.", ability_help(ability), ability.cooldown())
+    } else {
+        match a {
+            Action::Attack(_) => "Basic attack on the target, if in range.".into(),
+            Action::Guard => "Take half damage until this unit's next turn.".into(),
+            Action::Retreat => "Step away from the nearest enemy.".into(),
+            Action::ProtectAlly(_) => "Move next to the targeted ally.".into(),
+            Action::SendSignal(_) => {
+                "Teammates see this signal next tick. Click to change colour.".into()
+            }
+            _ => String::new(),
+        }
+    };
+    match a.target() {
+        Some(t) => format!("{base} Target: {} (click to change).", target_label(t)),
+        None => base,
     }
 }
 
@@ -91,75 +185,96 @@ pub fn block_label(b: Block) -> String {
     }
 }
 
-/// Short description shown for signature abilities.
-pub fn ability_help(a: Ability) -> &'static str {
-    match a {
-        Ability::Taunt => "Enemies within 2 cells must target this unit for 3 ticks.",
-        Ability::ShieldWall => "This unit and adjacent allies take half damage for 2 ticks.",
-        Ability::AimedShot => "Double damage, range +1.",
-        Ability::Kite => "Attack, then step away from the nearest enemy.",
-        Ability::Fireball => "Hits the target, plus half damage to enemies next to it.",
-        Ability::Blink => "Teleport up to 3 cells to the spot furthest from enemies.",
-        Ability::Heal => "Restore 4x attack in HP to an ally in range +1.",
-        Ability::Sanctuary => "An ally in range +1 is immune to damage for 2 ticks.",
-        Ability::Backstab => "Triple damage on an adjacent enemy next to one of your allies.",
-        Ability::Shadowstep => "Teleport next to an enemy within 4 cells, on its far side.",
-        Ability::Frenzy => "For 4 ticks, basic attacks strike twice.",
-        Ability::Cleave => "Hit every adjacent enemy.",
+pub fn block_requirement(b: Block) -> Requirement {
+    match b {
+        Block::Cond(c) => c.requirement(),
+        Block::Act(a) => a.requirement(),
+    }
+}
+
+/// Short lock label: "Lv 5", "2 Knights".
+pub fn requirement_label(req: Requirement) -> Option<String> {
+    match req {
+        Requirement::PlayerLevel(n) => Some(format!("Lv {n}")),
+        Requirement::Synergy(class, _) => Some(format!("2 {}", class.plural())),
+        Requirement::Start | Requirement::Signature(_) => None,
+    }
+}
+
+fn requirement_sentence(req: Requirement) -> Option<String> {
+    match req {
+        Requirement::PlayerLevel(n) => Some(format!("Unlocks at player level {n}.")),
+        Requirement::Synergy(class, Scope::Team) => {
+            Some(format!("Unlocked by 2 {} on the board, for the whole team.", class.plural()))
+        }
+        Requirement::Synergy(class, Scope::ClassOnly) => Some(format!(
+            "Unlocked by 2 {} on the board. Only {} can use it.",
+            class.plural(),
+            class.plural()
+        )),
+        Requirement::Start | Requirement::Signature(_) => None,
+    }
+}
+
+/// What a class synergy does at a tier (2 or 3).
+pub fn synergy_effect(class: Class, tier: u8) -> &'static str {
+    match (class, tier) {
+        (Class::Knight, 2) => "Unlocks 'ally attacked' (Knights only).",
+        (Class::Knight, _) => "+1 card slot for Knights.",
+        (Class::Ranger, 2) => "Unlocks the 'marked' target for the team.",
+        (Class::Ranger, _) => "+1 range for Rangers.",
+        (Class::Mage, 2) => "Unlocks 'enemies grouped' (Mages only).",
+        (Class::Mage, _) => "Mage signature cooldowns -2.",
+        (Class::Cleric, 2) => "Unlocks Signal blocks for the team.",
+        (Class::Cleric, _) => "Receiving a signal heals 10% max HP.",
+        (Class::Rogue, 2) => "Unlocks 'enemy isolated' (Rogues only).",
+        (Class::Rogue, _) => "Rogue crit chance doubles.",
+        (Class::Berserker, 2) => "Unlocks 'surrounded' (Berserkers only).",
+        (Class::Berserker, _) => "Fury: after a card fires, the next card also runs.",
     }
 }
 
 /// How far an ability reaches, for highlighting cells on the board (Manhattan radius).
-pub fn ability_reach(a: Ability, class: Class) -> u32 {
-    let range = class.base_stats().range;
+pub fn ability_reach(a: Ability, character: Character) -> u32 {
+    let range = character.base_stats().range;
+    use Ability::*;
     match a {
-        Ability::Taunt => 2,
-        Ability::ShieldWall | Ability::Backstab | Ability::Cleave => 1,
-        Ability::AimedShot | Ability::Heal | Ability::Sanctuary => range + 1,
-        Ability::Blink => 3,
-        Ability::Shadowstep => 4,
-        Ability::Kite | Ability::Fireball => range,
-        Ability::Frenzy => 0,
+        Taunt => 2,
+        ShieldWall | Backstab | Cleave | FrostNova | Rampage => 1,
+        AimedShot | Heal | Sanctuary => range + 1,
+        Blink | Assassinate => 3,
+        Shadowstep => 4,
+        Kite | Fireball | Firebolt | Volley => range,
+        SecondWind | Frenzy | MassHeal => 0,
     }
 }
 
-pub fn shared_conditions(class: Class) -> Vec<Condition> {
-    vec![
-        Condition::Always,
-        Condition::EnemyAdjacent,
-        Condition::EnemyInRange,
-        Condition::MyHpBelow(Threshold::P50),
-        Condition::AllyHpBelow(Threshold::P50),
-        Condition::Outnumbered,
-        Condition::AbilityReady(class.abilities()[0]),
-        Condition::EveryNTicks(3),
-        Condition::SignalReceived(Signal::Red),
-    ]
+/// The palette for a character: shared conditions, then its signatures and the
+/// shared actions. Locked blocks are included (shown greyed out).
+pub fn palette(character: Character) -> (Vec<Block>, Vec<Block>) {
+    let conds = palette_conditions().into_iter().map(Block::Cond).collect();
+    let acts = character
+        .abilities()
+        .iter()
+        .map(|&a| Block::Act(Action::for_ability(a)))
+        .chain(palette_actions().into_iter().map(Block::Act))
+        .collect();
+    (conds, acts)
 }
 
-pub fn shared_actions() -> Vec<Action> {
-    vec![
-        Action::Advance(Target::Nearest),
-        Action::Attack(Target::Nearest),
-        Action::Guard,
-        Action::Retreat,
-        Action::Hold,
-        Action::ProtectAlly(Target::LowestHp),
-        Action::SendSignal(Signal::Red),
-    ]
-}
-
-/// The class's two signature actions with sensible default targets.
-pub fn signature_actions(class: Class) -> Vec<Action> {
-    use Action::*;
-    match class {
-        Class::Knight => vec![Taunt, ShieldWall],
-        Class::Ranger => vec![AimedShot(Target::LowestHp), Kite(Target::Nearest)],
-        Class::Mage => vec![Fireball(Target::Nearest), Blink],
-        Class::Cleric => vec![Heal(Target::LowestHp), Sanctuary(Target::LowestHp)],
-        Class::Rogue => vec![Backstab(Target::Nearest), Shadowstep(Target::Ranged)],
-        Class::Berserker => vec![Frenzy, Cleave],
-    }
+/// Labels of the blocks and targets that unlock at a player level.
+pub fn unlocks_at_level(level: u32) -> Vec<String> {
+    let at = |req: Requirement| req == Requirement::PlayerLevel(level);
+    let mut out: Vec<String> =
+        palette_conditions().into_iter().filter(|c| at(c.requirement())).map(cond_label).collect();
+    out.extend(palette_actions().into_iter().filter(|a| at(a.requirement())).map(action_name));
+    out.extend(
+        Target::ALL
+            .into_iter()
+            .filter(|t| at(t.requirement()))
+            .map(|t| format!("target: {}", target_label(t))),
+    );
+    out
 }
 
 fn next_threshold(t: Threshold) -> Threshold {
@@ -178,52 +293,29 @@ fn other_signal(s: Signal) -> Signal {
 }
 
 /// The next setting for a condition when its slot is clicked.
-pub fn cycle_condition(c: Condition, class: Class) -> Condition {
+pub fn cycle_condition(c: Condition) -> Condition {
     match c {
         Condition::MyHpBelow(t) => Condition::MyHpBelow(next_threshold(t)),
         Condition::AllyHpBelow(t) => Condition::AllyHpBelow(next_threshold(t)),
-        Condition::EveryNTicks(n) => Condition::EveryNTicks(if n >= 5 { 2 } else { n + 1 }),
         Condition::SignalReceived(s) => Condition::SignalReceived(other_signal(s)),
-        Condition::AbilityReady(a) => {
-            let [first, second] = class.abilities();
-            Condition::AbilityReady(if a == first { second } else { first })
-        }
         other => other,
     }
 }
 
-fn with_target(a: Action, t: Target) -> Action {
-    use Action::*;
-    match a {
-        Advance(_) => Advance(t),
-        Attack(_) => Attack(t),
-        ProtectAlly(_) => ProtectAlly(t),
-        AimedShot(_) => AimedShot(t),
-        Kite(_) => Kite(t),
-        Fireball(_) => Fireball(t),
-        Heal(_) => Heal(t),
-        Sanctuary(_) => Sanctuary(t),
-        Backstab(_) => Backstab(t),
-        Shadowstep(_) => Shadowstep(t),
-        other => other,
-    }
-}
-
-/// The next valid setting for an action when its slot is clicked: the next
-/// target this class may use, or the other signal colour.
-pub fn cycle_action(a: Action, class: Class) -> Action {
+/// The next target this character may use, or the other signal colour.
+pub fn cycle_action(a: Action, unlocks: &Unlocks, character: Character) -> Action {
     if let Action::SendSignal(s) = a {
         return Action::SendSignal(other_signal(s));
     }
     let Some(current) = a.target() else { return a };
-    let order =
-        [Target::Nearest, Target::LowestHp, Target::HighestHp, Target::Strongest, Target::Ranged];
-    let start = order.iter().position(|&t| t == current).unwrap_or(0);
-    for step in 1..order.len() {
-        let candidate = with_target(a, order[(start + step) % order.len()]);
-        let probe = Program::new([Node::new(Condition::Always, candidate)]);
-        if probe.validate(class, Level::One).is_ok() {
-            return candidate;
+    let all = Target::ALL;
+    let start = all.iter().position(|&t| t == current).unwrap_or(0);
+    for step in 1..all.len() {
+        let t = all[(start + step) % all.len()];
+        let usable = unlocks.allows(t.requirement(), character)
+            && !(a.targets_allies() && t == Target::Marked);
+        if usable {
+            return a.with_target(t);
         }
     }
     a
@@ -244,6 +336,89 @@ pub fn program_to_draft(program: &Program) -> Vec<DraftCard> {
     program
         .nodes()
         .iter()
-        .map(|n| DraftCard { cond: Some(n.condition), act: Some(n.action) })
+        .map(|n| DraftCard {
+            cond: (n.condition != Condition::Always).then_some(n.condition),
+            act: Some(n.action),
+        })
         .collect()
+}
+
+// ----- Tooltips -----------------------------------------------------------
+
+pub fn unit_tooltip(c: Character, level: Option<Level>, note: Option<String>) -> Tooltip {
+    let level = level.unwrap_or(Level::One);
+    let stats = level.scale(c.base_stats());
+    let mut lines = vec![
+        (
+            format!(
+                "{} {} - {} gold - level {}",
+                c.rarity().name(),
+                c.class().name(),
+                c.rarity().cost(),
+                level.number()
+            ),
+            rarity_color(c.rarity()),
+        ),
+        (
+            format!("HP {}   Attack {}   Range {}", stats.max_hp, stats.attack, stats.range),
+            color::TEXT,
+        ),
+    ];
+    for &a in c.abilities() {
+        lines.push((
+            format!("{} (signature, cd {})", ability_label(a), a.cooldown()),
+            color::SIG_TEXT,
+        ));
+        lines.push((ability_help(a).to_string(), color::MUTED));
+    }
+    if let Some(p) = c.passive() {
+        lines.push((format!("{} (passive)", p.name()), color::GOLD_LIGHT));
+        lines.push((p.description().to_string(), color::MUTED));
+    }
+    if let Some(note) = note {
+        lines.push((note, color::GOOD));
+    }
+    Tooltip { title: c.name().to_string(), accent: rarity_color(c.rarity()), lines }
+}
+
+pub fn block_tooltip(b: Block, unlocks: &Unlocks, character: Character) -> Tooltip {
+    let (help, accent) = match b {
+        Block::Cond(c) => (cond_help(c), color::COND_LINE),
+        Block::Act(a) if a.ability().is_some() => (action_help(a), color::SIG_LINE),
+        Block::Act(a) => (action_help(a), color::ACT_LINE),
+    };
+    let mut lines = vec![(help, color::TEXT)];
+    let req = block_requirement(b);
+    if let Some(s) = requirement_sentence(req) {
+        let ink = if unlocks.allows(req, character) { color::MUTED } else { color::BAD };
+        lines.push((s, ink));
+    }
+    if let Block::Act(a) = b
+        && let Some(t) = a.target()
+        && let Some(s) = requirement_sentence(t.requirement())
+    {
+        lines.push((format!("Target '{}': {s}", target_label(t)), color::MUTED));
+    }
+    lines.push(("Drag or click into a card.".to_string(), color::FAINT));
+    Tooltip { title: block_label(b), accent, lines }
+}
+
+pub fn synergy_tooltip(class: Class, synergies: &Synergies) -> Tooltip {
+    let count = synergies.count(class);
+    let tier_line = |tier: u8| {
+        let ink = if count >= tier { color::GOLD_LIGHT } else { color::FAINT };
+        (format!("{tier}: {}", synergy_effect(class, tier)), ink)
+    };
+    let names: Vec<&str> =
+        Character::ALL.iter().filter(|c| c.class() == class).map(|c| c.short_name()).collect();
+    Tooltip {
+        title: format!("{} - {count} on the board", class.plural()),
+        accent: if count >= 2 { color::GOLD } else { color::LINE_STRONG },
+        lines: vec![
+            tier_line(2),
+            tier_line(3),
+            (names.join(", "), color::MUTED),
+            ("Only units on the board count, once per character.".to_string(), color::FAINT),
+        ],
+    }
 }

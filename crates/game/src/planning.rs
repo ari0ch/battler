@@ -1,9 +1,8 @@
-//! The timed planning phase: header, board, bench, shop and the selected-unit
-//! panel. The card editor drawer (in `editor.rs`) replaces the panel and shop
-//! while it's open.
+//! The timed planning phase, all on one screen: header, synergy tracker, board
+//! and bench, the selected unit's program (see `editor.rs`), and the shop.
 
 use battler_sim::run::economy::{
-    BENCH_SIZE, BOARD_HEIGHT, BOARD_WIDTH, PLAYER_COLUMNS, REROLL_COST, UNIT_COST,
+    BENCH_SIZE, BOARD_HEIGHT, BOARD_WIDTH, PLAYER_COLUMNS, REROLL_COST, XP_COST,
 };
 use battler_sim::run::{Location, OwnedUnit, Run};
 use battler_sim::{Class, Level, Pos};
@@ -25,14 +24,17 @@ impl Plugin for PlanningPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(RunPhase::Planning), enter).add_systems(
             Update,
-            (rebuild, tick_timer, update_cells).chain().run_if(in_state(RunPhase::Planning)),
+            (hotkeys, rebuild, tick_timers, update_cells)
+                .chain()
+                .run_if(in_state(RunPhase::Planning)),
         );
     }
 }
 
-pub const CELL: f32 = 58.0;
+pub const CELL: f32 = 70.0;
 pub const GAP: f32 = 4.0;
 const BOARD_PX: f32 = CELL * 8.0 + GAP * 7.0;
+const TILE: f32 = 58.0;
 
 /// Seconds allowed for planning this round.
 pub fn planning_seconds(run: &Run) -> f32 {
@@ -42,11 +44,11 @@ pub fn planning_seconds(run: &Run) -> f32 {
 
 fn enter(run: Res<GameRun>, mut planning: ResMut<Planning>, mut rev: ResMut<Rev>) {
     planning.time_left = planning_seconds(&run.0);
-    planning.editor_open = false;
     planning.toast = None;
     if planning.selected.is_some_and(|id| run.0.locate(id).is_none()) {
         planning.selected = None;
     }
+    editor::load_draft(&run.0, &mut planning);
     rev.bump();
 }
 
@@ -58,19 +60,46 @@ struct TimerText;
 struct TimerBar;
 #[derive(Component)]
 struct ToastText;
+#[derive(Component)]
+struct NoticeBox;
 
 /// A player-side board cell, coloured each frame (hover, reach highlight).
 #[derive(Component)]
 struct CellView(Pos);
 
-fn tick_timer(
+/// D rerolls, F buys XP, E sells the unit under the pointer.
+fn hotkeys(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut queue: ResMut<ActionQueue>,
+    units: Query<(&DragSource, &Hovered)>,
+) {
+    if keys.just_pressed(KeyCode::KeyD) {
+        queue.0.push(UiAction::Reroll);
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+        queue.0.push(UiAction::BuyXp);
+    }
+    if keys.just_pressed(KeyCode::KeyE) {
+        let hovered = units.iter().find_map(|(src, h)| match src {
+            DragSource::Unit(loc) if h.get() => Some(*loc),
+            _ => None,
+        });
+        if let Some(loc) = hovered {
+            queue.0.push(UiAction::SellAt(loc));
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tick_timers(
     time: Res<Time<Real>>,
     run: Res<GameRun>,
     mut planning: ResMut<Planning>,
     mut queue: ResMut<ActionQueue>,
     mut timer_text: Query<&mut Text, (With<TimerText>, Without<ToastText>)>,
-    mut timer_bar: Query<&mut Node, With<TimerBar>>,
+    mut timer_bar: Query<&mut Node, (With<TimerBar>, Without<NoticeBox>)>,
     mut toast_text: Query<&mut Text, (With<ToastText>, Without<TimerText>)>,
+    mut notice: Query<&mut Node, (With<NoticeBox>, Without<TimerBar>)>,
 ) {
     let dt = time.delta_secs();
     let before = planning.time_left;
@@ -99,27 +128,31 @@ fn tick_timer(
             **t = message.clone();
         }
     }
+
+    if let Some((_, left)) = planning.notice.as_mut() {
+        *left -= dt;
+    }
+    if planning.notice.as_ref().is_some_and(|(_, left)| *left <= 0.0) {
+        planning.notice = None;
+        for mut n in &mut notice {
+            n.display = Display::None;
+        }
+    }
 }
 
 /// Colours player-side cells: hover feedback, plus the reach of a hovered
-/// signature block around the selected unit while the editor is open.
+/// signature block around the selected unit.
 fn update_cells(
     run: Res<GameRun>,
     planning: Res<Planning>,
     hovered_ability: Res<HoveredAbility>,
     mut cells: Query<(&CellView, &Hovered, &mut BackgroundColor, &mut BorderColor)>,
 ) {
-    let origin = planning.selected.and_then(|id| run.0.locate(id)).and_then(|loc| match loc {
-        Location::Board(p) => Some(p),
-        Location::Bench(_) => None,
-    });
-    let unit_class = planning
-        .selected
-        .and_then(|id| run.0.locate(id))
-        .and_then(|l| run.0.unit_at(l))
-        .map(|u| u.class);
-    let reach = match (planning.editor_open, hovered_ability.0, origin, unit_class) {
-        (true, Some(a), Some(o), Some(c)) => Some((o, cards::ability_reach(a, c))),
+    let selected = editor::selected_unit(&run.0, &planning);
+    let reach = match (hovered_ability.0, selected) {
+        (Some(a), Some((Location::Board(origin), unit))) => {
+            Some((origin, cards::ability_reach(a, unit.character)))
+        }
         _ => None,
     };
     for (cell, hovered, mut bg, mut border) in &mut cells {
@@ -163,32 +196,22 @@ fn rebuild(
         stage
             .spawn(Node {
                 flex_grow: 1.0,
-                flex_direction: FlexDirection::Row,
                 min_height: px(0),
-                ..default()
+                padding: UiRect::new(px(20), px(20), px(14), px(12)),
+                align_items: AlignItems::Stretch,
+                ..row(16.0)
             })
             .with_children(|body| {
-                body.spawn(Node {
-                    flex_grow: 1.0,
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: px(14),
-                    padding: UiRect::top(px(18)),
-                    ..default()
-                })
-                .with_children(|left| {
-                    board_section(left, run, &planning);
-                    bench_section(left, run, &planning);
-                });
-                if planning.editor_open {
-                    editor::spawn_drawer(body, run, &planning);
-                } else {
-                    unit_panel(body, run, &planning);
-                }
+                synergy_column(body, run);
+                body.spawn(Node { width: px(BOARD_PX), flex_shrink: 0.0, ..column(8.0) })
+                    .with_children(|mid| {
+                        board_section(mid, run, &planning);
+                        bench_section(mid, run, &planning);
+                    });
+                editor::spawn_program_panel(body, run, &planning);
             });
-        if !planning.editor_open {
-            shop(stage, run);
-        }
+        shop(stage, run);
+        notice(stage, &planning);
     });
 }
 
@@ -196,34 +219,31 @@ fn header(stage: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
     stage
         .spawn((
             Node {
-                height: px(64),
+                height: px(60),
                 flex_shrink: 0.0,
-                padding: UiRect::horizontal(px(24)),
+                padding: UiRect::horizontal(px(20)),
                 border: UiRect::bottom(px(1)),
-                ..row(28.0)
+                ..row(24.0)
             },
             BackgroundColor(color::BAR),
             BorderColor::all(color::LINE),
         ))
         .with_children(|h| {
-            h.spawn(Node { width: px(220), ..column(2.0) }).with_children(|c| {
-                c.spawn(text(format!("Round {}", run.round()), 20.0, color::TEXT));
-                c.spawn(text(
-                    format!("Planning - board size {}", run.board_limit()),
-                    13.0,
-                    color::MUTED,
-                ));
+            h.spawn(Node { width: px(110), ..column(2.0) }).with_children(|c| {
+                c.spawn(text(format!("Round {}", run.round()), 19.0, color::TEXT));
+                c.spawn(text("Planning", 12.0, color::MUTED));
             });
-            h.spawn(Node { flex_grow: 1.0, align_items: AlignItems::Center, ..column(6.0) })
-                .with_children(|c| {
-                    let secs = planning.time_left.ceil() as u32;
-                    c.spawn((
-                        text(format!("{}:{:02}", secs / 60, secs % 60), 24.0, color::GOLD_LIGHT),
-                        TimerText,
-                    ));
+            h.spawn(Node { width: px(340), ..row(12.0) }).with_children(|lv| {
+                lv.spawn(Node { width: px(170), ..column(5.0) }).with_children(|c| {
+                    let xp = match run.xp_needed() {
+                        Some(n) => format!("Level {} - XP {} / {n}", run.level(), run.xp()),
+                        None => format!("Level {} - max", run.level()),
+                    };
+                    c.spawn(text(xp, 13.0, color::TEXT));
+                    let fill =
+                        run.xp_needed().map_or(100.0, |n| 100.0 * run.xp() as f32 / n as f32);
                     c.spawn((
                         Node {
-                            width: px(320),
                             height: px(6),
                             border_radius: BorderRadius::all(px(3)),
                             overflow: Overflow::clip(),
@@ -232,12 +252,43 @@ fn header(stage: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
                         BackgroundColor(color::LINE),
                     ))
                     .with_child((
-                        Node { width: percent(100), height: px(6), ..default() },
+                        Node { width: percent(fill), height: px(6), ..default() },
+                        BackgroundColor(color::XP),
+                    ));
+                });
+                spawn_button(
+                    lv,
+                    &format!("Buy XP {XP_COST} g (F)"),
+                    UiAction::BuyXp,
+                    SECONDARY,
+                    px(150),
+                    px(40),
+                );
+            });
+            h.spawn(Node { flex_grow: 1.0, align_items: AlignItems::Center, ..column(5.0) })
+                .with_children(|c| {
+                    let secs = planning.time_left.ceil() as u32;
+                    c.spawn((
+                        text(format!("{}:{:02}", secs / 60, secs % 60), 22.0, color::GOLD_LIGHT),
+                        TimerText,
+                    ));
+                    c.spawn((
+                        Node {
+                            width: px(260),
+                            height: px(5),
+                            border_radius: BorderRadius::all(px(3)),
+                            overflow: Overflow::clip(),
+                            ..default()
+                        },
+                        BackgroundColor(color::LINE),
+                    ))
+                    .with_child((
+                        Node { width: percent(100), height: px(5), ..default() },
                         BackgroundColor(color::GOLD),
                         TimerBar,
                     ));
                 });
-            h.spawn(Node { width: px(380), justify_content: JustifyContent::FlexEnd, ..row(22.0) })
+            h.spawn(Node { width: px(330), justify_content: JustifyContent::FlexEnd, ..row(20.0) })
                 .with_children(|r| {
                     stat(r, "Health", format!("{} / 100", run.hp()), color::TEXT);
                     stat(
@@ -256,34 +307,166 @@ fn header(stage: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
         });
     // The toast line floats just under the header.
     stage
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: px(70),
-            left: px(0),
-            right: px(0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
-        .insert(Pickable::IGNORE)
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(66),
+                left: px(0),
+                right: px(0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+            GlobalZIndex(50),
+        ))
         .with_child((text("", 15.0, color::BAD), ToastText));
 }
 
 fn stat(parent: &mut ChildSpawnerCommands, label: &str, value: String, value_color: Color) {
-    parent.spawn(Node { align_items: AlignItems::FlexEnd, ..column(4.0) }).with_children(|c| {
-        c.spawn(text(label, 13.0, color::MUTED));
-        c.spawn(text(value, 18.0, value_color));
+    parent.spawn(Node { align_items: AlignItems::FlexEnd, ..column(3.0) }).with_children(|c| {
+        c.spawn(text(label, 12.0, color::MUTED));
+        c.spawn(text(value, 17.0, value_color));
     });
 }
 
-pub fn class_letter(class: Class) -> &'static str {
-    match class {
-        Class::Knight => "K",
-        Class::Ranger => "R",
-        Class::Mage => "M",
-        Class::Cleric => "C",
-        Class::Rogue => "Ro",
-        Class::Berserker => "B",
-    }
+/// The level-up notice, under the header.
+fn notice(stage: &mut ChildSpawnerCommands, planning: &Planning) {
+    let Some((level, _)) = planning.notice else { return };
+    let unlocked = cards::unlocks_at_level(level);
+    stage
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(70),
+                left: px(380),
+                width: px(520),
+                padding: UiRect::axes(px(18), px(12)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(12)),
+                ..row(18.0)
+            },
+            BackgroundColor(color::PANEL),
+            BorderColor::all(color::GOLD),
+            GlobalZIndex(60),
+            NoticeBox,
+            Button,
+            Hovered::default(),
+            Clickable(UiAction::DismissNotice),
+        ))
+        .with_children(|n| {
+            n.spawn(Node { width: px(110), ..column(2.0) }).with_children(|c| {
+                c.spawn(text(format!("Level {level}"), 24.0, color::GOLD_LIGHT));
+                c.spawn(text(format!("Board size {level}"), 12.0, color::MUTED));
+            });
+            n.spawn(Node { flex_grow: 1.0, ..column(4.0) }).with_children(|c| {
+                if unlocked.is_empty() {
+                    c.spawn(text(
+                        "Better shop odds: rarer characters appear more often.",
+                        13.0,
+                        color::TEXT,
+                    ));
+                } else {
+                    c.spawn(text("New blocks unlocked", 12.0, color::MUTED));
+                    c.spawn(text(unlocked.join(", "), 14.0, color::TEXT));
+                }
+                c.spawn(text("Click to dismiss", 11.0, color::FAINT));
+            });
+        });
+}
+
+/// The synergy tracker: each class on the board (and bench-only ones, faded).
+fn synergy_column(parent: &mut ChildSpawnerCommands, run: &Run) {
+    let synergies = run.synergies();
+    let on_bench: Vec<Class> = run.bench().iter().flatten().map(|u| u.class()).collect();
+    let mut classes: Vec<Class> = Class::ALL
+        .into_iter()
+        .filter(|&c| synergies.count(c) > 0 || on_bench.contains(&c))
+        .collect();
+    classes.sort_by_key(|&c| std::cmp::Reverse(synergies.count(c)));
+
+    parent.spawn(Node { width: px(200), flex_shrink: 0.0, ..column(7.0) }).with_children(|col| {
+        col.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(0.0) })
+            .with_children(|h| {
+                h.spawn(text("Synergies", 12.0, color::MUTED));
+                h.spawn(text(
+                    format!("{} active", synergies.active_count()),
+                    11.0,
+                    color::GOLD_LIGHT,
+                ));
+            });
+        if classes.is_empty() {
+            col.spawn(text("Field 2 units of a class to unlock its synergy.", 11.0, color::FAINT));
+        }
+        for class in classes {
+            let count = synergies.count(class);
+            let active = count >= 2;
+            let bench_only = count == 0;
+            let (fill, line, name_ink) = if active {
+                (color::ACTIVE_FILL, color::ACTIVE_LINE, color::GOLD_LIGHT)
+            } else if bench_only {
+                (Color::NONE, color::LINE, color::FAINT)
+            } else {
+                (color::PANEL, color::LINE, color::TEXT)
+            };
+            col.spawn((
+                Node {
+                    padding: UiRect::axes(px(9), px(7)),
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(8)),
+                    ..column(4.0)
+                },
+                BackgroundColor(fill),
+                BorderColor::all(line),
+                Hovered::default(),
+                cards::synergy_tooltip(class, &synergies),
+            ))
+            .with_children(|r| {
+                r.spawn(row(8.0)).with_children(|top| {
+                    let (badge_fill, badge_ink) = if active {
+                        (color::GOLD, color::ON_GOLD)
+                    } else {
+                        (color::PANEL_2, name_ink)
+                    };
+                    top.spawn((
+                        Node {
+                            width: px(22),
+                            height: px(22),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border_radius: BorderRadius::all(px(6)),
+                            ..default()
+                        },
+                        BackgroundColor(badge_fill),
+                        Pickable::IGNORE,
+                    ))
+                    .with_child(text(count.to_string(), 12.0, badge_ink));
+                    top.spawn((Node { flex_grow: 1.0, ..default() }, Pickable::IGNORE))
+                        .with_child(text(class.plural(), 13.0, name_ink));
+                    top.spawn(text("2 > 3", 11.0, color::FAINT));
+                });
+                let effect = match count {
+                    3.. => Some((cards::synergy_effect(class, 3).to_string(), color::GOLD_LIGHT)),
+                    2 => Some((
+                        format!(
+                            "{} Next: {}",
+                            cards::synergy_effect(class, 2),
+                            cards::synergy_effect(class, 3)
+                        ),
+                        color::GOLD_LIGHT,
+                    )),
+                    1 => {
+                        Some((format!("1 more: {}", cards::synergy_effect(class, 2)), color::MUTED))
+                    }
+                    _ => None,
+                };
+                if let Some((t, ink)) = effect {
+                    r.spawn(text(t, 11.0, ink));
+                }
+            });
+        }
+        col.spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, Pickable::IGNORE))
+            .with_child(text("Only units on the board count.", 11.0, color::FAINT));
+    });
 }
 
 /// Small gold squares showing a unit's level.
@@ -304,15 +487,42 @@ pub fn spawn_pips(parent: &mut ChildSpawnerCommands, level: Level) {
     });
 }
 
-/// A draggable, clickable unit tile.
+/// Dots showing how many of a unit's card slots are programmed.
+fn spawn_card_dots(parent: &mut ChildSpawnerCommands, filled: usize, max: usize) {
+    parent.spawn((row(2.0), Pickable::IGNORE)).with_children(|p| {
+        for i in 0..max {
+            let c = if i < filled {
+                color::GOOD
+            } else if filled == 0 {
+                color::BAD
+            } else {
+                color::LINE_STRONG
+            };
+            p.spawn((
+                Node {
+                    width: px(4),
+                    height: px(4),
+                    border_radius: BorderRadius::all(px(2)),
+                    ..default()
+                },
+                BackgroundColor(c),
+                Pickable::IGNORE,
+            ));
+        }
+    });
+}
+
+/// A draggable, clickable unit tile with a tooltip.
 fn unit_tile(
     parent: &mut ChildSpawnerCommands,
+    run: &Run,
     unit: &OwnedUnit,
     loc: Location,
     size: f32,
     selected: bool,
 ) {
-    let ring = if selected { color::GOLD } else { color::BLUE };
+    let c = unit.character;
+    let max = run.synergies().card_slots(c, unit.level);
     parent
         .spawn((
             Button,
@@ -328,35 +538,46 @@ fn unit_tile(
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                row_gap: px(3),
+                row_gap: px(2),
                 border: UiRect::all(px(2)),
-                border_radius: BorderRadius::all(px(8)),
+                border_radius: BorderRadius::all(px(9)),
                 ..default()
             },
             BackgroundColor(color::BLUE_FILL),
-            BorderColor::all(ring),
+            BorderColor::all(cards::rarity_color(c.rarity())),
+            Outline {
+                width: px(if selected { 2.0 } else { 0.0 }),
+                offset: px(2),
+                color: color::GOLD,
+            },
+            cards::unit_tooltip(
+                c,
+                Some(unit.level),
+                Some(format!("Sells for {} gold (E)", unit.sell_value())),
+            ),
         ))
         .with_children(|t| {
-            t.spawn(text(class_letter(unit.class), 17.0, color::BLUE_TEXT));
+            t.spawn(text(
+                cards::initials(c),
+                if size > 50.0 { 16.0 } else { 14.0 },
+                color::BLUE_TEXT,
+            ));
             spawn_pips(t, unit.level);
+            spawn_card_dots(t, unit.program.len(), max);
         });
 }
 
 fn board_section(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
-    parent
-        .spawn(Node {
-            width: px(BOARD_PX),
-            justify_content: JustifyContent::SpaceBetween,
-            ..row(0.0)
-        })
-        .with_children(|r| {
+    parent.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(0.0) }).with_children(
+        |r| {
             r.spawn(text(
                 format!("Your side - {} / {} placed", run.board().len(), run.board_limit()),
-                13.0,
+                12.0,
                 color::MUTED,
             ));
-            r.spawn(text("Enemy side - revealed at battle start", 13.0, color::MUTED));
-        });
+            r.spawn(text("Enemy side - hidden until battle", 12.0, color::MUTED));
+        },
+    );
     parent.spawn(column(GAP)).with_children(|board| {
         for y in 0..BOARD_HEIGHT {
             board.spawn(row(GAP)).with_children(|cells| {
@@ -368,7 +589,7 @@ fn board_section(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planni
                         align_items: AlignItems::Center,
                         justify_content: JustifyContent::Center,
                         border: UiRect::all(px(1)),
-                        border_radius: BorderRadius::all(px(6)),
+                        border_radius: BorderRadius::all(px(7)),
                         ..default()
                     };
                     if x >= PLAYER_COLUMNS {
@@ -395,9 +616,10 @@ fn board_section(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planni
                             if let Some(unit) = run.unit_at(loc) {
                                 unit_tile(
                                     cell,
+                                    run,
                                     unit,
                                     loc,
-                                    48.0,
+                                    TILE,
                                     planning.selected == Some(unit.id),
                                 );
                             }
@@ -410,193 +632,51 @@ fn board_section(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planni
 
 fn bench_section(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
     let used = run.bench().iter().flatten().count();
-    parent.spawn(Node { width: px(BOARD_PX), ..column(8.0) }).with_children(|b| {
-        b.spawn(text(
-            format!("Bench - {used} / {BENCH_SIZE} - inactive copies, saved for merging"),
-            13.0,
-            color::MUTED,
-        ));
-        b.spawn(row(6.0)).with_children(|slots| {
-            let slot_w = (BOARD_PX - 6.0 * (BENCH_SIZE as f32 - 1.0)) / BENCH_SIZE as f32;
-            for i in 0..BENCH_SIZE {
-                slots
-                    .spawn(ui::button(
-                        UiAction::ClickBench(i),
-                        ui::ButtonStyle {
-                            fill: color::PANEL,
-                            hover: color::PANEL_2,
-                            border: color::LINE_STRONG,
-                        },
-                        Node { width: px(slot_w), height: px(56), ..default() },
-                    ))
-                    .insert(DropTarget::Bench(i))
-                    .with_children(|slot| {
-                        let loc = Location::Bench(i);
-                        if let Some(unit) = run.unit_at(loc) {
-                            unit_tile(slot, unit, loc, 44.0, planning.selected == Some(unit.id));
-                        }
-                    });
-            }
-        });
-    });
-}
-
-fn unit_panel(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
     parent
         .spawn(Node {
-            width: px(340),
-            padding: UiRect::new(px(0), px(24), px(18), px(0)),
-            ..default()
+            justify_content: JustifyContent::SpaceBetween,
+            margin: UiRect::top(px(4)),
+            ..row(0.0)
         })
-        .with_children(|wrap| {
-            wrap.spawn(ui::panel(Node {
-                width: percent(100),
-                padding: UiRect::all(px(18)),
-                ..column(14.0)
-            }))
-            .with_children(|p| {
-                let selected = planning
-                    .selected
-                    .and_then(|id| run.locate(id))
-                    .and_then(|loc| run.unit_at(loc).map(|u| (loc, u)));
-                let Some((loc, unit)) = selected else {
-                    p.spawn(text("No unit selected", 18.0, color::TEXT));
-                    for line in [
-                        "Buy units in the shop below.",
-                        "Click a unit to select it, then click a cell",
-                        "or bench slot to move it - or just drag it.",
-                        "Drag a unit onto the shop to sell it.",
-                    ] {
-                        p.spawn(text(line, 14.0, color::MUTED));
-                    }
-                    return;
-                };
-                let stats = unit.level.scale(unit.class.base_stats());
-                p.spawn(row(14.0)).with_children(|r| {
-                    r.spawn((
-                        Node {
-                            width: px(52),
-                            height: px(52),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::Center,
-                            border: UiRect::all(px(2)),
-                            border_radius: BorderRadius::all(px(10)),
-                            ..default()
-                        },
-                        BackgroundColor(color::BLUE_FILL),
-                        BorderColor::all(color::GOLD),
-                    ))
-                    .with_child(text(
-                        class_letter(unit.class),
-                        22.0,
-                        color::BLUE_TEXT,
-                    ));
-                    r.spawn(column(3.0)).with_children(|c| {
-                        c.spawn(text(unit.class.name(), 18.0, color::TEXT));
-                        let place = match loc {
-                            Location::Board(_) => "on the board",
-                            Location::Bench(_) => "on the bench",
-                        };
-                        c.spawn(text(
-                            format!(
-                                "Level {} - {} - {place}",
-                                unit.level.number(),
-                                unit.class.role()
-                            ),
-                            13.0,
-                            color::MUTED,
-                        ));
-                    });
-                });
-                p.spawn(row(24.0)).with_children(|r| {
-                    for (label, value) in
-                        [("HP", stats.max_hp), ("Attack", stats.attack), ("Range", stats.range)]
-                    {
-                        r.spawn(column(2.0)).with_children(|c| {
-                            c.spawn(text(label, 12.0, color::MUTED));
-                            c.spawn(text(value.to_string(), 15.0, color::TEXT));
-                        });
-                    }
-                });
-                let max = unit.level.max_nodes();
-                p.spawn(column(8.0)).with_children(|c| {
-                    c.spawn(text(
-                        format!("Cards - {} / {max}", unit.program.len()),
-                        13.0,
-                        color::MUTED,
-                    ));
-                    for (i, node) in unit.program.nodes().iter().enumerate() {
-                        c.spawn((
-                            Node {
-                                padding: UiRect::axes(px(10), px(7)),
-                                border_radius: BorderRadius::all(px(8)),
-                                ..default()
-                            },
-                            BackgroundColor(color::PANEL_2),
-                        ))
-                        .with_child(text(
-                            format!("{} {}", i + 1, cards::card_label(node)),
-                            13.0,
-                            color::TEXT,
-                        ));
-                    }
-                    for _ in unit.program.len()..max {
-                        c.spawn((
-                            Node {
-                                padding: UiRect::axes(px(10), px(7)),
-                                border: UiRect::all(px(1)),
-                                border_radius: BorderRadius::all(px(8)),
-                                ..default()
-                            },
-                            BorderColor::all(color::LINE_STRONG),
-                        ))
-                        .with_child(text(
-                            "Empty card slot",
-                            13.0,
-                            color::FAINT,
-                        ));
-                    }
-                    c.spawn(text(
-                        "Locked: attack nearest, advancing if needed",
-                        12.0,
-                        color::FAINT,
-                    ));
-                });
-                p.spawn(row(10.0)).with_children(|r| {
-                    spawn_button(
-                        r,
-                        "Edit cards",
-                        UiAction::OpenEditor,
-                        ui::TOGGLED,
-                        px(150),
-                        px(44),
-                    );
-                    let refund = unit.level.copies() * UNIT_COST;
-                    spawn_button(
-                        r,
-                        &format!("Sell - {refund} g"),
-                        UiAction::Sell,
-                        SECONDARY,
-                        px(130),
-                        px(44),
-                    );
-                });
-                p.spawn(text(
-                    format!("Copies owned: {} of 9 for level 3", run.copies_owned(unit.class)),
-                    12.0,
-                    color::FAINT,
-                ));
-            });
+        .with_children(|r| {
+            r.spawn(text(format!("Bench - {used} / {BENCH_SIZE}"), 12.0, color::MUTED));
+            r.spawn(text(
+                "Ring = rarity - dots = cards programmed - hover for stats",
+                11.0,
+                color::FAINT,
+            ));
         });
+    parent.spawn(row(5.0)).with_children(|slots| {
+        let slot_w = (BOARD_PX - 5.0 * (BENCH_SIZE as f32 - 1.0)) / BENCH_SIZE as f32;
+        for i in 0..BENCH_SIZE {
+            slots
+                .spawn(ui::button(
+                    UiAction::ClickBench(i),
+                    ui::ButtonStyle {
+                        fill: color::PANEL,
+                        hover: color::PANEL_2,
+                        border: color::LINE_STRONG,
+                    },
+                    Node { width: px(slot_w), height: px(58), ..default() },
+                ))
+                .insert(DropTarget::Bench(i))
+                .with_children(|slot| {
+                    let loc = Location::Bench(i);
+                    if let Some(unit) = run.unit_at(loc) {
+                        unit_tile(slot, run, unit, loc, 50.0, planning.selected == Some(unit.id));
+                    }
+                });
+        }
+    });
 }
 
 fn shop(stage: &mut ChildSpawnerCommands, run: &Run) {
     stage
         .spawn((
             Node {
-                height: px(132),
+                height: px(112),
                 flex_shrink: 0.0,
-                padding: UiRect::horizontal(px(24)),
+                padding: UiRect::horizontal(px(20)),
                 border: UiRect::top(px(1)),
                 ..row(12.0)
             },
@@ -611,14 +691,15 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Run) {
                     let node = Node {
                         flex_grow: 1.0,
                         flex_basis: px(0),
-                        height: px(96),
-                        padding: UiRect::axes(px(12), px(10)),
+                        height: px(88),
+                        padding: UiRect::axes(px(11), px(9)),
                         flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::SpaceBetween,
                         align_items: AlignItems::FlexStart,
+                        overflow: Overflow::clip(),
                         ..default()
                     };
-                    let Some(class) = *offer else {
+                    let Some(c) = *offer else {
                         offers
                             .spawn((
                                 Node {
@@ -630,10 +711,22 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Run) {
                                 },
                                 BorderColor::all(color::LINE),
                             ))
-                            .with_child(text("Sold", 14.0, color::FAINT));
+                            .with_child(text("Sold", 13.0, color::FAINT));
                         continue;
                     };
-                    let merges = run.buy_would_merge(class);
+                    let merges = run.buy_would_merge(c);
+                    let raises = run.would_raise_synergy(c);
+                    let owned = run.copies_owned(c);
+                    let (note, note_ink) = if merges {
+                        (format!("Owned {owned} - merges"), color::GOOD)
+                    } else if raises {
+                        let next = run.synergies().count(c.class()) + 1;
+                        (format!("{next} {} - activates", c.class().plural()), color::GOLD_LIGHT)
+                    } else if owned > 0 {
+                        (format!("Owned {owned}"), color::MUTED)
+                    } else {
+                        ("New".to_string(), color::FAINT)
+                    };
                     let border = if merges { color::GOOD } else { color::LINE_STRONG };
                     offers
                         .spawn(ui::button(
@@ -641,30 +734,36 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Run) {
                             ui::ButtonStyle { fill: color::PANEL, hover: color::PANEL_2, border },
                             node,
                         ))
+                        .insert(cards::unit_tooltip(c, None, None))
                         .with_children(|card| {
-                            card.spawn(row(10.0)).with_children(|r| {
+                            card.spawn((row(9.0), Pickable::IGNORE)).with_children(|r| {
                                 r.spawn((
                                     Node {
-                                        width: px(40),
-                                        height: px(40),
+                                        width: px(34),
+                                        height: px(34),
+                                        flex_shrink: 0.0,
                                         align_items: AlignItems::Center,
                                         justify_content: JustifyContent::Center,
                                         border: UiRect::all(px(2)),
-                                        border_radius: BorderRadius::all(px(8)),
+                                        border_radius: BorderRadius::all(px(7)),
                                         ..default()
                                     },
                                     BackgroundColor(color::BLUE_FILL),
-                                    BorderColor::all(color::BLUE),
+                                    BorderColor::all(cards::rarity_color(c.rarity())),
                                     Pickable::IGNORE,
                                 ))
                                 .with_child(text(
-                                    class_letter(class),
-                                    16.0,
+                                    cards::initials(c),
+                                    13.0,
                                     color::BLUE_TEXT,
                                 ));
-                                r.spawn((column(2.0), Pickable::IGNORE)).with_children(|c| {
-                                    c.spawn(text(class.name(), 15.0, color::TEXT));
-                                    c.spawn(text(class.role(), 12.0, color::MUTED));
+                                r.spawn((column(1.0), Pickable::IGNORE)).with_children(|col| {
+                                    col.spawn(text(c.name(), 13.0, color::TEXT));
+                                    col.spawn(text(
+                                        format!("{} {}", c.rarity().name(), c.class().name()),
+                                        11.0,
+                                        cards::rarity_color(c.rarity()),
+                                    ));
                                 });
                             });
                             card.spawn((
@@ -676,30 +775,26 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Run) {
                                 Pickable::IGNORE,
                             ))
                             .with_children(|r| {
-                                let owned = run.copies_owned(class);
-                                let (label, c) = if merges {
-                                    (format!("Owned {owned} - merges on buy"), color::GOOD)
-                                } else if owned > 0 {
-                                    (format!("Owned {owned}"), color::MUTED)
-                                } else {
-                                    ("Not owned".to_string(), color::FAINT)
-                                };
-                                r.spawn(text(label, 12.0, c));
-                                r.spawn(text(format!("{UNIT_COST} g"), 12.0, color::GOLD_LIGHT));
+                                r.spawn(text(note, 11.0, note_ink));
+                                r.spawn(text(
+                                    format!("{} g", c.rarity().cost()),
+                                    11.0,
+                                    color::GOLD_LIGHT,
+                                ));
                             });
                         });
                 }
             });
-            footer.spawn(Node { width: px(150), ..column(10.0) }).with_children(|c| {
+            footer.spawn(Node { width: px(140), ..column(8.0) }).with_children(|col| {
                 spawn_button(
-                    c,
-                    &format!("Reroll - {REROLL_COST} g"),
+                    col,
+                    &format!("Reroll {REROLL_COST} g (D)"),
                     UiAction::Reroll,
                     SECONDARY,
                     percent(100),
-                    px(44),
+                    px(38),
                 );
-                spawn_button(c, "Ready", UiAction::Ready, PRIMARY, percent(100), px(48));
+                spawn_button(col, "Ready", UiAction::Ready, PRIMARY, percent(100), px(44));
             });
         });
 }

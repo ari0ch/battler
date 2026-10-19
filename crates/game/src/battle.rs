@@ -6,12 +6,13 @@
 use std::collections::HashMap;
 
 use battler_sim::run::BattleSetup;
-use battler_sim::{Battle, CardRef, Event, Outcome, Pos, StatusKind, Team, UnitId};
+use battler_sim::{Battle, CardRef, Class, Event, Outcome, Pos, StatusKind, Team, UnitId};
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
 use crate::cards;
-use crate::planning::{class_letter, spawn_pips};
-use crate::state::{AppState, GameRun, LastReport, Rev, RunPhase, Settings};
+use crate::planning::spawn_pips;
+use crate::state::{AppState, GameRun, LastReport, Planning, Rev, RunPhase, Settings};
 use crate::ui::{self, SECONDARY, TOGGLED, UiAction, color, column, row, spawn_button, text};
 
 pub struct BattlePlugin;
@@ -208,9 +209,10 @@ fn rebuild(
                                     spawn_unit(board, unit);
                                 }
                             });
+                        synergy_strip(left, battle);
                         left.spawn(text(
-                            "Badges show the card each unit ran. Letters: S shield, G guard, I immune, F frenzy, T taunted.",
-                            12.0,
+                            "Badges: the card each unit ran. Letters: S shield, G guard, I immune, F frenzy, T taunted, Z frozen, M marked, V vanished.",
+                            11.0,
                             color::FAINT,
                         ));
                     });
@@ -292,7 +294,7 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit) {
                 BorderColor::all(ring),
             ))
             .with_children(|t| {
-                t.spawn(text(class_letter(unit.class), 18.0, ink));
+                t.spawn(text(cards::initials(unit.character), 17.0, ink));
                 spawn_pips(t, unit.level);
                 t.spawn((text("", 10.0, color::GOLD_LIGHT), StatusLetters(unit.id)));
             });
@@ -310,6 +312,7 @@ fn advance(
     next_phase: Option<ResMut<NextState<RunPhase>>>,
     board: Query<Entity, With<BoardLayer>>,
     mut tick_text: Query<&mut Text, With<TickText>>,
+    mut planning: ResMut<Planning>,
 ) {
     if pb.done {
         return;
@@ -352,6 +355,7 @@ fn advance(
             next_app.set(AppState::GameOver);
         } else if let Some(run) = run.as_mut() {
             let report = run.0.resolve(&pb.battle);
+            planning.level_up(&report.level_ups);
             commands.insert_resource(LastReport(report));
             if let Some(mut next) = next_phase {
                 next.set(RunPhase::Result);
@@ -403,6 +407,21 @@ fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: 
         Event::SignalSent { unit, .. } => {
             if let Some(p) = pos_of(unit, pb) {
                 spawn_floater(commands, board, p, "Signal".into(), color::GOLD_LIGHT, 12.0);
+            }
+        }
+        Event::TurnSkipped { unit } => {
+            if let Some(p) = pos_of(unit, pb) {
+                spawn_floater(commands, board, p, "Frozen".into(), color::BLUE_TEXT, 13.0);
+            }
+        }
+        Event::Revived { unit, .. } => {
+            if let Some(p) = pos_of(unit, pb) {
+                spawn_floater(commands, board, p, "Revived!".into(), color::GOLD_LIGHT, 15.0);
+            }
+        }
+        Event::CheatedDeath { unit } => {
+            if let Some(p) = pos_of(unit, pb) {
+                spawn_floater(commands, board, p, "Undying!".into(), color::GOLD_LIGHT, 15.0);
             }
         }
         _ => {}
@@ -481,6 +500,8 @@ fn animate_units(
             node.display = Display::None;
             continue;
         }
+        // Resurrection can bring a unit back.
+        node.display = Display::Flex;
         let from = pb.prev.get(&unit.id).copied().unwrap_or(unit.pos);
         let lerp = |a: f32, b: f32| a + (b - a) * t;
         node.left = px(lerp(cell_left(from), cell_left(unit.pos)));
@@ -511,6 +532,15 @@ fn animate_units(
             }
             if s.taunted_by.is_some_and(|(_, until)| until >= tick) {
                 out.push('T');
+            }
+            if s.frozen_turns > 0 {
+                out.push('Z');
+            }
+            if s.hunters_marked {
+                out.push('M');
+            }
+            if s.untargetable_until >= tick && tick > 0 {
+                out.push('V');
             }
             if **text != out {
                 **text = out;
@@ -560,7 +590,7 @@ fn refresh_trace(
                     if unit.team == Team::Player { color::BLUE_TEXT } else { color::RED_TEXT };
                 c.spawn(column(2.0)).with_children(|u| {
                     u.spawn(text(
-                        format!("{} L{}", unit.class.name(), unit.level.number()),
+                        format!("{} L{}", unit.character.short_name(), unit.level.number()),
                         12.0,
                         head,
                     ));
@@ -588,4 +618,59 @@ fn refresh_trace(
             }
         });
     });
+}
+
+/// Both sides' synergies under the board: active ones highlighted.
+fn synergy_strip(parent: &mut ChildSpawnerCommands, battle: &Battle) {
+    parent
+        .spawn(Node {
+            width: px(BOARD_W),
+            justify_content: JustifyContent::SpaceBetween,
+            ..row(12.0)
+        })
+        .with_children(|strip| {
+            for (team, label, ink) in [
+                (Team::Player, "Your synergies", color::BLUE_TEXT),
+                (Team::Enemy, "Enemy synergies", color::RED_TEXT),
+            ] {
+                let syn = battle.synergies(team);
+                strip.spawn(row(6.0)).with_children(|side| {
+                    side.spawn(text(label, 12.0, ink));
+                    let mut any = false;
+                    for class in Class::ALL {
+                        let count = syn.count(class);
+                        if count == 0 {
+                            continue;
+                        }
+                        any = true;
+                        let active = count >= 2;
+                        let (fill, line, ink) = if active {
+                            (color::ACTIVE_FILL, color::ACTIVE_LINE, color::GOLD_LIGHT)
+                        } else {
+                            (Color::NONE, color::LINE, color::FAINT)
+                        };
+                        side.spawn((
+                            Node {
+                                padding: UiRect::axes(px(7), px(2)),
+                                border: UiRect::all(px(1)),
+                                border_radius: BorderRadius::all(px(6)),
+                                ..default()
+                            },
+                            BackgroundColor(fill),
+                            BorderColor::all(line),
+                            Hovered::default(),
+                            cards::synergy_tooltip(class, &syn),
+                        ))
+                        .with_child(text(
+                            format!("{count} {}", class.plural()),
+                            12.0,
+                            ink,
+                        ));
+                    }
+                    if !any {
+                        side.spawn(text("none", 12.0, color::FAINT));
+                    }
+                });
+            }
+        });
 }
