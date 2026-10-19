@@ -176,10 +176,10 @@ fn planning_action(
                 report(planning, lobby.act(Command::Move { from, to: Location::Bench(i) }));
             }
             (DragSource::Unit(from), DropTarget::Sell) => sell(lobby, planning, from),
-            (DragSource::Block(block), DropTarget::Card(card, slot)) => {
-                editor::drop_block(lobby, planning, card, slot, block)
+            (DragSource::Block(block), DropTarget::Card(card)) => {
+                editor::drop_block(lobby, planning, card, block)
             }
-            (DragSource::Block(_), _) | (DragSource::Unit(_), DropTarget::Card(..)) => {}
+            (DragSource::Block(_), _) | (DragSource::Unit(_), DropTarget::Card(_)) => {}
         },
         _ => {}
     }

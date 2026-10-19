@@ -94,7 +94,8 @@ pub enum DropTarget {
     Cell(Pos),
     Bench(usize),
     Sell,
-    Card(usize, Slot),
+    /// A program card, by index (one past the end starts a new card).
+    Card(usize),
 }
 
 /// Everything the player can do by clicking or dropping.
@@ -209,9 +210,15 @@ fn on_drop(
     sources: Query<&DragSource>,
     mut queue: ResMut<ActionQueue>,
 ) {
-    // The event bubbles up through ancestors; act only on the drop target itself.
+    // Bevy sends a drop to *every* element under the pointer, and each one
+    // bubbles up through its ancestors. Dropping onto an occupied cell therefore
+    // reaches the cell twice: directly, and via the unit standing on it. Applying
+    // both would swap twice and undo the move, so queue each drop only once.
     if let (Ok(target), Ok(source)) = (targets.get(ev.entity), sources.get(ev.dropped)) {
-        queue.0.push(UiAction::Drop(*source, *target));
+        let action = UiAction::Drop(*source, *target);
+        if !queue.0.contains(&action) {
+            queue.0.push(action);
+        }
     }
 }
 

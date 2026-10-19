@@ -212,15 +212,6 @@ pub fn block_requirement(b: Block) -> Requirement {
     }
 }
 
-/// Short lock label: "Lv 5", "2 Knights".
-pub fn requirement_label(req: Requirement) -> Option<String> {
-    match req {
-        Requirement::PlayerLevel(n) => Some(format!("Lv {n}")),
-        Requirement::Synergy(class, _) => Some(format!("2 {}", class.plural())),
-        Requirement::Start | Requirement::Signature(_) => None,
-    }
-}
-
 fn requirement_sentence(req: Requirement) -> Option<String> {
     match req {
         Requirement::PlayerLevel(n) => Some(format!("Unlocks at player level {n}.")),

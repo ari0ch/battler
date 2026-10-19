@@ -67,13 +67,6 @@ fn try_draft(lobby: &mut Lobby, planning: &mut Planning, draft: Vec<DraftCard>) 
     }
 }
 
-fn slot_of(block: Block) -> Slot {
-    match block {
-        Block::Cond(_) => Slot::Cond,
-        Block::Act(_) => Slot::Act,
-    }
-}
-
 fn put(card: &mut DraftCard, block: Block) {
     match block {
         Block::Cond(c) => card.cond = Some(c),
@@ -82,20 +75,11 @@ fn put(card: &mut DraftCard, block: Block) {
 }
 
 /// Drops a block into a specific card (an index one past the end starts a new card).
-pub fn drop_block(
-    lobby: &mut Lobby,
-    planning: &mut Planning,
-    card: usize,
-    slot: Slot,
-    block: Block,
-) {
-    if slot_of(block) != slot {
-        planning.toast(match slot {
-            Slot::Cond => "That slot takes a condition",
-            Slot::Act => "That slot takes an action",
-        });
-        return;
-    }
+///
+/// The block replaces whichever half of the card matches its kind, so dropping
+/// an action onto a card's condition half (a near miss) still does what the
+/// player meant, and dropping onto a filled half replaces it.
+pub fn drop_block(lobby: &mut Lobby, planning: &mut Planning, card: usize, block: Block) {
     let Some((_, unit)) = selected_unit(lobby.me(), planning) else { return };
     let max = lobby.me().synergies().card_slots(unit.character, unit.level);
     let mut draft = planning.draft.clone();
@@ -119,7 +103,7 @@ pub fn click_block(lobby: &mut Lobby, planning: &mut Planning, block: Block) {
         Block::Act(_) => c.act.is_none(),
     });
     let card = first_gap.unwrap_or(planning.draft.len());
-    drop_block(lobby, planning, card, slot_of(block), block);
+    drop_block(lobby, planning, card, block);
 }
 
 pub fn cycle_slot(lobby: &mut Lobby, planning: &mut Planning, card: usize, slot: Slot) {
@@ -350,7 +334,7 @@ fn slot_box(
             ..default()
         },
     ));
-    e.insert(DropTarget::Card(card, slot));
+    e.insert(DropTarget::Card(card));
     if let Some(b) = block {
         e.insert(cards::block_tooltip(b, unlocks, character));
     }
@@ -383,11 +367,10 @@ fn chip_colors(block: Block) -> (Color, Color, Color) {
     }
 }
 
-/// A palette chip: draggable and clickable when unlocked, greyed with its
-/// requirement when locked. Both show a tooltip.
+/// A palette chip: draggable and clickable, with a tooltip. Only unlocked
+/// blocks get one; locked blocks stay hidden until they unlock (the level-up
+/// notice announces them).
 fn chip(parent: &mut ChildSpawnerCommands, block: Block, unlocks: &Unlocks, character: Character) {
-    let req = cards::block_requirement(block);
-    let unlocked = unlocks.allows(req, character);
     let tooltip = cards::block_tooltip(block, unlocks, character);
     let node = Node {
         padding: UiRect::axes(px(7), px(3)),
@@ -395,16 +378,6 @@ fn chip(parent: &mut ChildSpawnerCommands, block: Block, unlocks: &Unlocks, char
         border_radius: BorderRadius::all(px(6)),
         ..default()
     };
-    if !unlocked {
-        let label = match cards::requirement_label(req) {
-            Some(r) => format!("{} - {r}", cards::block_label(block)),
-            None => cards::block_label(block),
-        };
-        parent
-            .spawn((node, BorderColor::all(color::LINE), Hovered::default(), tooltip))
-            .with_child(text(label, 11.0, color::FAINT));
-        return;
-    }
     let (fill, line, ink) = chip_colors(block);
     let mut e = parent.spawn((
         Button,
@@ -446,7 +419,11 @@ fn chip_group(
 }
 
 fn palette(parent: &mut ChildSpawnerCommands, character: Character, unlocks: &Unlocks) {
-    let (conds, acts) = cards::palette(character);
+    let (mut conds, mut acts) = cards::palette(character);
+    // `retain` filters a Vec in place; the closure gets a reference to each item.
+    let usable = |b: &Block| unlocks.allows(cards::block_requirement(*b), character);
+    conds.retain(usable);
+    acts.retain(usable);
     parent.spawn(column(8.0)).with_children(|p| {
         chip_group(p, "Conditions", conds, unlocks, character);
         chip_group(p, "Actions", acts, unlocks, character);
