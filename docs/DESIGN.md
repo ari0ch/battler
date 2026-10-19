@@ -182,6 +182,20 @@ In priority order:
   | round + surviving enemy levels | 1% | 12.1 |
 
   Not changed yet: the current formula is the agreed starting point. Revisit after playing.
+- **Balance harness, first pass (Oct 2026).** `cargo run -p battler-sim --example balance
+  --release` (6000 random 3-6 a side fights, 300 bot runs). Before tuning, Rangers won 61%
+  and Rogues 40%; after the class stat changes above, all classes sit at 48-51%. Remaining
+  findings:
+  - Within classes, Epics win 57-68% and Commons 39-49%, as intended, except **Vex (Rare,
+    43%) is weaker than Nettle (Common, 47%)**: Opportunist only helps against wounded
+    targets. Candidate for a buff.
+  - **Seraphine (68%) and Ysolde (65%) are the strongest characters.**
+  - **Synergies barely change random fights (49% win rate for the side with more active
+    synergies)**, because preset programs don't use synergy blocks and random teams rarely
+    reach tier 3. Needs a synergy-aware harness test before judging synergy strength.
+  - **The naive bot reaches round ~12.5 and wins ~1 battle per run; 0% victories.** The AI
+    (levels with the round, gets stars automatically) may be too strong for players who
+    don't plan merges. Watch this in playtesting.
 - **Turn order:** player units are spawned first, so they act first each tick. A small
   first-mover advantage; consider interleaving if it shows up in testing.
 
@@ -272,21 +286,32 @@ Rules:
 - **Crits:** each hit has a 15% chance to deal 150% damage, from the battle's seeded RNG.
   Crit chance can be set to 0 per battle (useful for tests, or a no-luck mode).
 - **Levels:** HP and attack scale ×1.8 per level (100% / 180% / 324%); range doesn't.
+- **Freeze** (Frost Nova) costs the target its first turn *after* the tick it was frozen,
+  so it is always exactly one turn regardless of turn order. Frozen units take +20%
+  damage (Chill) until that turn.
+- **Synergies in battle** are fixed when the battle starts, from each side's units. Cards
+  needing an inactive synergy, or beyond a unit's card slots, are skipped.
+- **Fury** (3 Berserkers): after a Berserker's card fires, the next card also runs if its
+  condition holds and its action can run. Never chains from the locked default rule.
+- **Resurrection** triggers once per battle, for the first ally to fall while Seraphine is
+  alive. **Undying** triggers once. **Vanish** lasts ticks 1 and 2.
 
 ## Classes
 
-| Class | HP | Attack | Range | Signature blocks |
-|---|---|---|---|---|
-| Knight | 600 | 40 | 1 | Taunt, Shield Wall |
-| Ranger | 350 | 55 | 3 | Aimed Shot, Kite |
-| Mage | 350 | 45 | 3 | Fireball, Blink |
-| Cleric | 400 | 25 | 2 | Heal, Sanctuary |
-| Rogue | 400 | 60 | 1 | Backstab, Shadowstep |
-| Berserker | 550 | 50 | 1 | Frenzy, Cleave |
+| Class | HP | Attack | Range |
+|---|---|---|---|
+| Knight | 650 | 42 | 1 |
+| Ranger | 300 | 44 | 3 |
+| Mage | 350 | 45 | 3 |
+| Cleric | 380 | 25 | 2 |
+| Rogue | 480 | 72 | 1 |
+| Berserker | 550 | 50 | 1 |
 
-(Level 1 stats. All numbers are first guesses for tuning.)
+Level 1 stats of a Common. Rares get +10% HP and attack, Epics +20%. Signatures now come
+from characters (see Roster). Tuned with the balance harness (Oct 2026) so every class
+wins 48-51% of random team fights.
 
-## Block reference
+## Block reference (pre-phase 3; see Block reassessment and Synergies for the current set)
 
 **Conditions** (shared): always · enemy adjacent · enemy in range · my HP below 25/50/75% ·
 ally HP below 25/50/75% · outnumbered (more enemies than allies within 2 cells) ·
@@ -345,6 +370,9 @@ Goal: prove the program → watch → analyse loop is fun, then add the shop.
   merging, economy, timed rounds, a card editor drawer, battle readability (badges,
   floating numbers, status letters, optional card trace) and post-game replays.
   Not yet: projectile/taunt lines, signal pulses, sound, art.
-- **Phase 3 (next):** one-screen planning layout, named characters with rarities, player
-  level and XP, progressive block unlocks with tooltips, programming-hook synergies,
-  and a headless balance harness.
+- **Phase 3 (built, Oct 2026):** one-screen planning layout, 18 named characters with
+  rarities and passives, player level and XP, rarity shop odds, progressive block unlocks,
+  hover tooltips, level-up notices, hotkeys, programming-hook synergies including Fury,
+  synergy tracker and battle strip, and a headless balance harness.
+- **Next candidates:** pixel art (32x32 sprites shown at 2x), projectile/taunt lines,
+  synergy-aware AI programs, balance passes from playtesting.

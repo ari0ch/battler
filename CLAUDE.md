@@ -13,7 +13,8 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 - `crates/game`: `battler`, the Bevy 0.20 client. Rendering, input, editor, replay.
   It reads sim state; game rules never live here.
 - `crates/sim/src/run/`: the run (shop, pool, bench, board, merges, economy, AI boards,
-  per-round `BattleSetup` history for replays). Tuning numbers live in `run/economy.rs`.
+  per-round `BattleSetup` history for replays). Tuning numbers live in `run/economy.rs`;
+  class/character stats in `class.rs`; synergy rules in `synergy.rs`.
 - `.github/workflows/ci.yml`: fmt, clippy (`-D warnings`) and tests on every push.
 - `.github/workflows/deploy.yml`: trunk WASM build, deployed to GitHub Pages on `main`.
   The live build is at https://ari0ch.github.io/battler/
@@ -31,6 +32,8 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 ## Commands
 
 - `cargo test -p battler-sim`: fast sim tests.
+- `cargo run -p battler-sim --example balance --release`: balance harness (character and
+  class win rates in random fights, bot runs). Run it after changing numbers.
 - `cargo dev`: run the game natively with dynamic linking (alias in `.cargo/config.toml`).
 - `cd crates/game && trunk serve`: run the web build locally.
 - `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` before committing.
@@ -46,6 +49,10 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   plus picking observers. **Import `bevy::ui_widgets::Button` explicitly**: the prelude's
   `Button` and `Interaction` are deprecated in 0.20 and fail clippy.
 - `actions.rs`: the only place UI input changes the `Run`.
+- `planning.rs`: the one-screen planning layout. `editor.rs`: the program column (cards +
+  palette) and editing logic. `cards.rs`: all block/character/synergy wording and tooltips.
+- Tooltips: add `Hovered::default()` plus a `ui::Tooltip` to any entity; one shared
+  floating panel shows it.
 - Screens rebuild from state whenever the `Rev` resource is bumped (every applied
   action, every state entry). Fast-changing bits (timer, toasts, battle animation)
   update in place via marker components, so a rebuild never interrupts a drag.
