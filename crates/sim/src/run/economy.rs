@@ -1,7 +1,7 @@
-//! Run tuning numbers and the gold/damage formulas.
+//! Run tuning numbers and the gold/XP/damage formulas.
 //!
-//! Every value here is an agreed starting point, to tune after playtesting
-//! (see `docs/DESIGN.md`).
+//! Every value here is an agreed starting point, to tune after simulation and
+//! playtesting (see `docs/DESIGN.md`).
 
 pub const START_HP: u32 = 100;
 pub const START_GOLD: u32 = 10;
@@ -12,14 +12,20 @@ pub const INTEREST_STEP: u32 = 10;
 /// ...up to this much.
 pub const MAX_INTEREST: u32 = 5;
 
-pub const UNIT_COST: u32 = 3;
 pub const REROLL_COST: u32 = 2;
 pub const SHOP_SIZE: usize = 5;
 pub const BENCH_SIZE: usize = 9;
-/// Level 1 copies of each class in the shared pool.
-pub const POOL_COPIES: u32 = 12;
 /// Surviving this round with HP left wins the run.
 pub const FINAL_ROUND: u32 = 15;
+
+/// Player levels. Board size equals the player's level.
+pub const START_LEVEL: u32 = 3;
+pub const MAX_LEVEL: u32 = 8;
+/// XP gained automatically at the end of every round.
+pub const XP_PER_ROUND: u32 = 2;
+/// Buying XP: this much gold for this much XP.
+pub const XP_COST: u32 = 4;
+pub const XP_PER_BUY: u32 = 4;
 
 /// Battlefield size, and the columns the player may place units in.
 pub const BOARD_WIDTH: i32 = 8;
@@ -28,13 +34,27 @@ pub const PLAYER_COLUMNS: i32 = 4;
 /// Ticks before an undecided battle is called a draw.
 pub const MAX_TICKS: u32 = 200;
 
-/// How many units may be on the board in a given round.
-pub fn board_size(round: u32) -> usize {
-    match round {
-        0..=2 => 3,
-        3..=5 => 4,
-        6..=9 => 5,
-        _ => 6,
+/// XP needed to go from `level` to the next one, or `None` at the maximum.
+pub fn xp_to_next(level: u32) -> Option<u32> {
+    match level {
+        3 => Some(6),
+        4 => Some(10),
+        5 => Some(20),
+        6 => Some(36),
+        7 => Some(56),
+        _ => None,
+    }
+}
+
+/// Shop odds (Common, Rare, Epic) in percent at a player level.
+pub fn shop_odds(level: u32) -> [u32; 3] {
+    match level {
+        0..=3 => [80, 20, 0],
+        4 => [65, 30, 5],
+        5 => [45, 40, 15],
+        6 => [30, 45, 25],
+        7 => [20, 40, 40],
+        _ => [15, 35, 50],
     }
 }
 
@@ -90,7 +110,11 @@ mod tests {
     }
 
     #[test]
-    fn board_grows_with_rounds() {
-        assert_eq!([1, 3, 6, 10, 15].map(board_size), [3, 4, 5, 6, 6]);
+    fn odds_add_up_and_shift_towards_epics() {
+        for level in START_LEVEL..=MAX_LEVEL {
+            assert_eq!(shop_odds(level).iter().sum::<u32>(), 100, "level {level}");
+        }
+        assert!(shop_odds(MAX_LEVEL)[2] > shop_odds(START_LEVEL)[2]);
+        assert_eq!(xp_to_next(MAX_LEVEL), None);
     }
 }

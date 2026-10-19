@@ -1,7 +1,10 @@
 use std::fmt;
 
 use crate::program::ProgramError;
-use crate::{Ability, CardRef, Pos, Rng, Signal, Statuses, Team, Unit, UnitId, UnitSpec};
+use crate::synergy::Synergies;
+use crate::{
+    Ability, CardRef, Class, Passive, Pos, Rng, Signal, Statuses, Team, Unit, UnitId, UnitSpec,
+};
 
 /// Chance (in percent) that any single hit is a critical strike.
 pub const CRIT_CHANCE_PERCENT: u32 = 15;
@@ -54,7 +57,20 @@ pub enum Event {
         unit: UnitId,
         ability: Ability,
     },
+    /// A frozen unit lost its turn.
+    TurnSkipped {
+        unit: UnitId,
+    },
     Died {
+        unit: UnitId,
+    },
+    /// Brought back by Resurrection.
+    Revived {
+        unit: UnitId,
+        hp: u32,
+    },
+    /// Survived a killing blow (Undying).
+    CheatedDeath {
         unit: UnitId,
     },
 }
@@ -64,6 +80,8 @@ pub enum StatusKind {
     Shielded,
     Immune,
     Frenzied,
+    Frozen,
+    Marked,
     Taunted { by: UnitId },
 }
 
@@ -121,11 +139,20 @@ pub struct Battle {
     log: Vec<(u32, Event)>,
     outcome: Outcome,
     pub(crate) rng: Rng,
-    pub(crate) crit_chance: u32,
+    pub(crate) crit_override: Option<u32>,
     /// Signals sent this tick, per team (bit set), delivered next tick.
     pub(crate) signals_pending: [u8; 2],
     /// Signals teammates can see this tick.
     pub(crate) signals_active: [u8; 2],
+    /// Each team's synergies, fixed when the battle starts.
+    pub(crate) synergies: [Synergies; 2],
+    /// The enemy each team's Rangers hit most recently (Rangers synergy target).
+    pub(crate) ranger_mark: [Option<UnitId>; 2],
+    /// Whether each team's Resurrection has been used.
+    pub(crate) resurrection_used: [bool; 2],
+    /// Set while an Arcane Surge ability resolves: its hits crit.
+    pub(crate) force_crit: bool,
+    started: bool,
 }
 
 impl Battle {
@@ -142,14 +169,22 @@ impl Battle {
             log: Vec::new(),
             outcome: Outcome::Ongoing,
             rng: Rng::new(seed),
-            crit_chance: CRIT_CHANCE_PERCENT,
+            crit_override: None,
             signals_pending: [0; 2],
             signals_active: [0; 2],
+            synergies: [Synergies::default(); 2],
+            ranger_mark: [None; 2],
+            resurrection_used: [false; 2],
+            force_crit: false,
+            started: false,
         }
     }
 
-    /// Adds a unit before the battle starts, after checking its program is
-    /// legal for its class and level.
+    /// Adds a unit before the battle starts.
+    ///
+    /// Only basic program checks happen here (card count and signatures); unlock
+    /// rules are the run's business. Cards whose synergy isn't active in this
+    /// battle, or beyond the unit's card slots, are simply skipped.
     pub fn spawn(&mut self, team: Team, pos: Pos, spec: UnitSpec) -> Result<UnitId, SpawnError> {
         if !self.in_bounds(pos) {
             return Err(SpawnError::OutOfBounds(pos));
@@ -157,30 +192,36 @@ impl Battle {
         if self.is_occupied(pos) {
             return Err(SpawnError::Occupied(pos));
         }
-        spec.program.validate(spec.class, spec.level)?;
+        spec.program.validate_basic(spec.character)?;
 
-        let stats = spec.level.scale(spec.class.base_stats());
+        let stats = spec.level.scale(spec.character.base_stats());
         let id = UnitId(self.next_id);
         self.next_id += 1;
         self.units.push(Unit {
             id,
             team,
-            class: spec.class,
+            character: spec.character,
+            class: spec.character.class(),
             level: spec.level,
             stats,
             pos,
             hp: stats.max_hp,
             program: spec.program,
             statuses: Statuses::default(),
+            crit_chance: CRIT_CHANCE_PERCENT,
             ready_at: [0; Ability::COUNT],
+            abilities_used: 0,
+            cheated_death: false,
+            #[cfg(test)]
+            inert: false,
         });
         Ok(id)
     }
 
-    /// Overrides the crit chance (default [`CRIT_CHANCE_PERCENT`]). Setting it
-    /// to 0 removes all randomness from the battle.
+    /// Overrides every unit's crit chance (default [`CRIT_CHANCE_PERCENT`]).
+    /// Setting it to 0 removes all randomness from the battle.
     pub fn set_crit_chance(&mut self, percent: u32) {
-        self.crit_chance = percent.min(100);
+        self.crit_override = Some(percent.min(100));
     }
 
     pub fn width(&self) -> i32 {
@@ -207,9 +248,44 @@ impl Battle {
         self.outcome
     }
 
+    /// A team's synergies (computed when the battle starts; before that, from
+    /// the units spawned so far).
+    pub fn synergies(&self, team: Team) -> Synergies {
+        if self.started { self.synergies[team.index()] } else { self.compute_synergies(team) }
+    }
+
     /// Every event so far, tagged with the tick it happened on.
     pub fn log(&self) -> &[(u32, Event)] {
         &self.log
+    }
+
+    fn compute_synergies(&self, team: Team) -> Synergies {
+        Synergies::from_characters(
+            self.units.iter().filter(|u| u.team == team).map(|u| u.character),
+        )
+    }
+
+    /// Fixes synergies and applies battle-start effects.
+    fn begin(&mut self) {
+        self.started = true;
+        for team in [Team::Player, Team::Enemy] {
+            self.synergies[team.index()] = self.compute_synergies(team);
+        }
+        for unit in &mut self.units {
+            let syn = self.synergies[unit.team.index()];
+            if unit.class == Class::Ranger && syn.full(Class::Ranger) {
+                unit.stats.range += 1;
+            }
+            if unit.class == Class::Rogue && syn.full(Class::Rogue) {
+                unit.crit_chance *= 2;
+            }
+            if let Some(c) = self.crit_override {
+                unit.crit_chance = c;
+            }
+            if unit.has_passive(Passive::Vanish) {
+                unit.statuses.untargetable_until = 2;
+            }
+        }
     }
 
     /// Advances one tick and returns the events it produced.
@@ -218,11 +294,15 @@ impl Battle {
         if self.outcome != Outcome::Ongoing {
             return Vec::new();
         }
+        if !self.started {
+            self.begin();
+        }
         self.tick += 1;
         // Signals sent last tick become visible now.
         self.signals_active = std::mem::take(&mut self.signals_pending);
 
         let mut events = Vec::new();
+        self.signal_heals(&mut events);
         for i in 0..self.units.len() {
             if self.units[i].is_alive() {
                 self.take_turn(i, &mut events);
@@ -233,6 +313,23 @@ impl Battle {
         let tick = self.tick;
         self.log.extend(events.iter().cloned().map(|e| (tick, e)));
         events
+    }
+
+    /// Clerics synergy tier 3: receiving a signal heals 10% of max HP.
+    fn signal_heals(&mut self, events: &mut Vec<Event>) {
+        for team in [Team::Player, Team::Enemy] {
+            let t = team.index();
+            if self.signals_active[t] == 0 || !self.synergies[t].full(Class::Cleric) {
+                continue;
+            }
+            for unit in self.units.iter_mut().filter(|u| u.team == team && u.is_alive()) {
+                let amount = (unit.stats.max_hp / 10).min(unit.stats.max_hp - unit.hp);
+                if amount > 0 {
+                    unit.hp += amount;
+                    events.push(Event::Healed { healer: unit.id, target: unit.id, amount });
+                }
+            }
+        }
     }
 
     /// Steps until the battle ends and returns the result.

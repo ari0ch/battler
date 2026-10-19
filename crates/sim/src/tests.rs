@@ -1,9 +1,11 @@
-//! Behaviour tests for the interpreter and abilities.
+//! Behaviour tests for the interpreter, abilities, passives and synergies.
 //!
-//! Most tests call `set_crit_chance(0)` so damage numbers are exact.
+//! Most tests call `set_crit_chance(0)` so damage numbers are exact, and use
+//! inert target dummies that never act.
 
 use crate::*;
 use Action::*;
+use Character::*;
 use Condition::*;
 
 fn card(condition: Condition, action: Action) -> Node {
@@ -17,21 +19,34 @@ fn battle(width: i32, height: i32) -> Battle {
     b
 }
 
-fn add(b: &mut Battle, team: Team, x: i32, y: i32, class: Class, nodes: &[Node]) -> UnitId {
-    let spec = UnitSpec::new(class, Level::Three, Program::new(nodes.to_vec()));
+fn add(b: &mut Battle, team: Team, x: i32, y: i32, who: Character, nodes: &[Node]) -> UnitId {
+    let spec = UnitSpec::new(who, Level::Three, Program::new(nodes.to_vec()));
     b.spawn(team, Pos::new(x, y), spec).expect("valid test unit")
 }
 
-/// A unit that never does anything.
-fn dummy(b: &mut Battle, team: Team, x: i32, y: i32, class: Class) -> UnitId {
-    add(b, team, x, y, class, &[card(Always, Hold)])
+/// A unit that never takes a turn.
+fn dummy(b: &mut Battle, team: Team, x: i32, y: i32, who: Character) -> UnitId {
+    let id = add(b, team, x, y, who, &[]);
+    b.units.last_mut().unwrap().inert = true;
+    id
 }
 
-fn fired(events: &[Event], unit: UnitId) -> Option<CardRef> {
-    events.iter().find_map(|e| match e {
-        Event::CardFired { unit: u, card } if *u == unit => Some(*card),
-        _ => None,
-    })
+fn unit_mut(b: &mut Battle, id: UnitId) -> &mut Unit {
+    b.units.iter_mut().find(|u| u.id == id).unwrap()
+}
+
+fn fired(events: &[Event], unit: UnitId) -> Vec<CardRef> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::CardFired { unit: u, card } if *u == unit => Some(*card),
+            _ => None,
+        })
+        .collect()
+}
+
+fn first_fired(events: &[Event], unit: UnitId) -> Option<CardRef> {
+    fired(events, unit).first().copied()
 }
 
 fn damage_to(events: &[Event], target: UnitId) -> Vec<u32> {
@@ -44,33 +59,39 @@ fn damage_to(events: &[Event], target: UnitId) -> Vec<u32> {
         .collect()
 }
 
-fn attack_of(class: Class) -> u32 {
-    Level::Three.scale(class.base_stats()).attack
+fn healed(events: &[Event], target: UnitId) -> u32 {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Healed { target: t, amount, .. } if *t == target => Some(*amount),
+            _ => None,
+        })
+        .sum()
+}
+
+fn attack_of(who: Character) -> u32 {
+    Level::Three.scale(who.base_stats()).attack
+}
+
+fn max_hp_of(who: Character) -> u32 {
+    Level::Three.scale(who.base_stats()).max_hp
 }
 
 // ----- Reproducibility ---------------------------------------------------
 
-fn melee_brawl(seed: u64) -> Battle {
+fn brawl(seed: u64) -> Battle {
     let mut b = Battle::new(8, 4, 300, seed);
-    let p = Team::Player;
-    let e = Team::Enemy;
-    add(&mut b, p, 1, 1, Class::Knight, &[card(EnemyAdjacent, Taunt), card(Always, ShieldWall)]);
-    add(&mut b, p, 0, 0, Class::Ranger, &[card(EnemyInRange, AimedShot(Target::LowestHp))]);
-    add(
-        &mut b,
-        p,
-        0,
-        2,
-        Class::Cleric,
-        &[card(AllyHpBelow(Threshold::P75), Heal(Target::LowestHp))],
-    );
-    add(&mut b, e, 6, 1, Class::Berserker, &[card(EnemyAdjacent, Frenzy), card(Always, Cleave)]);
+    let (p, e) = (Team::Player, Team::Enemy);
+    add(&mut b, p, 1, 1, SirAldric, &[card(AllyHpBelow(Threshold::P50), ShieldWall)]);
+    add(&mut b, p, 0, 0, Kestrel, &[card(EnemyAdjacent, Kite(Target::Nearest))]);
+    add(&mut b, p, 0, 2, Seraphine, &[card(AllyHpBelow(Threshold::P75), MassHeal)]);
+    add(&mut b, e, 6, 1, Korgath, &[card(EnemyAdjacent, Rampage)]);
     add(
         &mut b,
         e,
         7,
         0,
-        Class::Mage,
+        Vorn,
         &[card(EnemyAdjacent, Blink), card(Always, Fireball(Target::Nearest))],
     );
     add(
@@ -78,15 +99,15 @@ fn melee_brawl(seed: u64) -> Battle {
         e,
         7,
         3,
-        Class::Rogue,
-        &[card(Always, Shadowstep(Target::Ranged)), card(Always, Backstab(Target::Nearest))],
+        GreyWidow,
+        &[card(Always, Assassinate), card(Always, Shadowstep(Target::Weakest))],
     );
     b
 }
 
 #[test]
 fn same_seed_replays_identically() {
-    let (mut a, mut b) = (melee_brawl(1234), melee_brawl(1234));
+    let (mut a, mut b) = (brawl(1234), brawl(1234));
     assert_eq!(a.run_to_end(), b.run_to_end());
     assert_eq!(a.log(), b.log());
     assert_ne!(a.outcome(), Outcome::Ongoing);
@@ -95,12 +116,12 @@ fn same_seed_replays_identically() {
 #[test]
 fn different_seeds_can_play_out_differently() {
     let reference = {
-        let mut b = melee_brawl(0);
+        let mut b = brawl(0);
         b.run_to_end();
         b.log().to_vec()
     };
     let differs = (1..=20).any(|seed| {
-        let mut b = melee_brawl(seed);
+        let mut b = brawl(seed);
         b.run_to_end();
         b.log() != reference.as_slice()
     });
@@ -110,63 +131,97 @@ fn different_seeds_can_play_out_differently() {
 #[test]
 fn crits_deal_extra_damage() {
     let mut b = battle(2, 1);
-    let target = dummy(&mut b, Team::Player, 0, 0, Class::Knight);
-    add(&mut b, Team::Enemy, 1, 0, Class::Berserker, &[card(Always, Attack(Target::Nearest))]);
+    let target = dummy(&mut b, Team::Player, 0, 0, BramGatewarden);
+    add(&mut b, Team::Enemy, 1, 0, Grub, &[card(Always, Attack(Target::Nearest))]);
     b.set_crit_chance(100);
     let events = b.step();
-    let base = attack_of(Class::Berserker);
-    assert_eq!(damage_to(&events, target), vec![base * CRIT_DAMAGE_PERCENT / 100]);
-    assert!(events.iter().any(|e| matches!(e, Event::Attacked { crit: true, .. })));
+    assert_eq!(damage_to(&events, target), vec![attack_of(Grub) * CRIT_DAMAGE_PERCENT / 100]);
 }
 
-// ----- Programs and validation ---------------------------------------------
+// ----- Characters and programs -------------------------------------------
 
 #[test]
-fn node_count_is_capped_by_level() {
-    let program = Program::new(vec![card(Always, Hold); 3]);
-    assert_eq!(
-        program.validate(Class::Knight, Level::One),
-        Err(ProgramError::TooManyNodes { max: 2, got: 3 })
-    );
-    assert_eq!(program.validate(Class::Knight, Level::Two), Ok(()));
+fn rarity_scales_stats_and_eagle_eye_adds_range() {
+    assert_eq!(SirAldric.base_stats().max_hp, Class::Knight.base_stats().max_hp * 110 / 100);
+    assert_eq!(Ysolde.base_stats().attack, Class::Knight.base_stats().attack * 120 / 100);
+    assert_eq!(Elowen.base_stats().range, 4);
+    assert_eq!(PipQuickfeather.base_stats().range, 3);
 }
 
 #[test]
-fn classes_can_only_use_their_own_signatures() {
+fn roster_has_three_rarities_per_class() {
+    for class in Class::ALL {
+        let mut rarities: Vec<Rarity> =
+            Character::ALL.iter().filter(|c| c.class() == class).map(|c| c.rarity()).collect();
+        rarities.sort();
+        assert_eq!(rarities, Rarity::ALL.to_vec(), "{class:?}");
+    }
+    for c in Character::ALL {
+        let expected = if c.rarity() == Rarity::Epic { 2 } else { 1 };
+        assert_eq!(c.abilities().len(), expected, "{c:?}");
+        assert_eq!(c.passive().is_some(), c.rarity() != Rarity::Common, "{c:?}");
+    }
+}
+
+#[test]
+fn characters_can_only_use_their_own_signatures() {
     let fireball = Program::new([card(Always, Fireball(Target::Nearest))]);
     assert!(matches!(
-        fireball.validate(Class::Knight, Level::One),
-        Err(ProgramError::AbilityNotAvailable { ability: Ability::Fireball, .. })
+        fireball.validate_basic(BramGatewarden),
+        Err(ProgramError::NotThisCharacter { ability: Ability::Fireball, .. })
     ));
-    assert_eq!(fireball.validate(Class::Mage, Level::One), Ok(()));
+    assert_eq!(fireball.validate_basic(Vorn), Ok(()));
+}
 
-    let ready = Program::new([card(AbilityReady(Ability::Heal), Hold)]);
-    assert!(ready.validate(Class::Knight, Level::One).is_err());
+fn unlocks(level: u32, board: &[Character]) -> Unlocks {
+    Unlocks { player_level: level, synergies: Synergies::from_characters(board.iter().copied()) }
 }
 
 #[test]
-fn only_rangers_focus_the_weakest_enemy() {
-    let focus = Program::new([card(Always, Attack(Target::LowestHp))]);
+fn blocks_unlock_with_player_level() {
+    let p = Program::new([card(EnemyInRange, Attack(Target::Strongest))]);
     assert!(matches!(
-        focus.validate(Class::Rogue, Level::One),
-        Err(ProgramError::TargetNotAvailable { target: Target::LowestHp, .. })
+        p.validate(PipQuickfeather, Level::One, &unlocks(3, &[])),
+        Err(ProgramError::Locked { requirement: Requirement::PlayerLevel(4), .. })
     ));
-    assert_eq!(focus.validate(Class::Ranger, Level::One), Ok(()));
-    // Picking the most hurt *ally* is fine for anyone who can heal.
-    let heal = Program::new([card(Always, Heal(Target::LowestHp))]);
-    assert_eq!(heal.validate(Class::Cleric, Level::One), Ok(()));
+    assert_eq!(p.validate(PipQuickfeather, Level::One, &unlocks(4, &[])), Ok(()));
 }
 
 #[test]
-fn spawn_rejects_invalid_programs_and_positions() {
+fn synergy_blocks_need_the_synergy_and_sometimes_the_class() {
+    let surrounded = Program::new([card(Surrounded, Cleave)]);
+    assert!(surrounded.validate(Grub, Level::One, &unlocks(3, &[Grub])).is_err());
+    assert_eq!(surrounded.validate(Grub, Level::One, &unlocks(3, &[Grub, Hilda])), Ok(()));
+    let class_only = Program::new([card(Surrounded, Guard)]);
+    assert!(class_only.validate(Nettle, Level::One, &unlocks(3, &[Grub, Hilda])).is_err());
+
+    let marked = Program::new([card(Always, Attack(Target::Marked))]);
+    assert_eq!(marked.validate(Nettle, Level::One, &unlocks(3, &[Kestrel, Elowen])), Ok(()));
+}
+
+#[test]
+fn card_slots_follow_level_and_knight_synergy() {
+    let three = Program::new(vec![card(Always, Guard); 3]);
+    assert!(matches!(
+        three.validate(BramGatewarden, Level::One, &unlocks(3, &[])),
+        Err(ProgramError::TooManyCards { max: 2, got: 3 })
+    ));
+    let five = Program::new(vec![card(Always, Guard); 5]);
+    let knights = [BramGatewarden, SirAldric, Ysolde];
+    assert_eq!(five.validate(Ysolde, Level::Three, &unlocks(3, &knights)), Ok(()));
+    assert!(five.validate(Ysolde, Level::Three, &unlocks(3, &knights[..2])).is_err());
+}
+
+#[test]
+fn spawn_rejects_bad_signatures_and_positions() {
     let mut b = battle(3, 1);
-    let bad = UnitSpec::new(Class::Knight, Level::One, Program::new([card(Always, Blink)]));
+    let bad = UnitSpec::new(BramGatewarden, Level::One, Program::new([card(Always, Blink)]));
     assert!(matches!(
         b.spawn(Team::Player, Pos::new(0, 0), bad),
         Err(SpawnError::InvalidProgram(_))
     ));
-    dummy(&mut b, Team::Player, 0, 0, Class::Knight);
-    let ok = UnitSpec::new(Class::Knight, Level::One, Program::default());
+    dummy(&mut b, Team::Player, 0, 0, BramGatewarden);
+    let ok = UnitSpec::new(BramGatewarden, Level::One, Program::default());
     assert_eq!(
         b.spawn(Team::Enemy, Pos::new(0, 0), ok.clone()),
         Err(SpawnError::Occupied(Pos::new(0, 0)))
@@ -175,13 +230,6 @@ fn spawn_rejects_invalid_programs_and_positions() {
         b.spawn(Team::Enemy, Pos::new(5, 0), ok),
         Err(SpawnError::OutOfBounds(Pos::new(5, 0)))
     );
-}
-
-#[test]
-fn levels_scale_stats() {
-    let knight = Class::Knight.base_stats();
-    assert_eq!(Level::Two.scale(knight).max_hp, knight.max_hp * 180 / 100);
-    assert_eq!(Level::Three.scale(knight).range, knight.range);
 }
 
 // ----- Interpreter ---------------------------------------------------------
@@ -194,15 +242,14 @@ fn falls_through_when_an_action_cannot_run() {
         Team::Player,
         0,
         0,
-        Class::Knight,
+        BramGatewarden,
         &[
             card(Always, Attack(Target::Nearest)), // nothing in range
             card(Always, Guard),
         ],
     );
-    dummy(&mut b, Team::Enemy, 3, 0, Class::Knight);
-    let events = b.step();
-    assert_eq!(fired(&events, knight), Some(CardRef::Node(1)));
+    dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), knight), Some(CardRef::Node(1)));
 }
 
 #[test]
@@ -213,154 +260,156 @@ fn false_conditions_are_skipped() {
         Team::Player,
         0,
         0,
-        Class::Knight,
-        &[card(MyHpBelow(Threshold::P50), Guard), card(Always, Hold)],
+        BramGatewarden,
+        &[card(MyHpBelow(Threshold::P50), Taunt), card(Always, Guard)],
     );
-    dummy(&mut b, Team::Enemy, 3, 0, Class::Knight);
-    assert_eq!(fired(&b.step(), knight), Some(CardRef::Node(1)));
+    dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), knight), Some(CardRef::Node(1)));
 }
 
 #[test]
 fn locked_default_rule_advances_then_attacks() {
     let mut b = battle(3, 1);
-    let knight = add(&mut b, Team::Player, 0, 0, Class::Knight, &[]);
-    let target = dummy(&mut b, Team::Enemy, 2, 0, Class::Knight);
-
+    let knight = add(&mut b, Team::Player, 0, 0, BramGatewarden, &[]);
+    let target = dummy(&mut b, Team::Enemy, 2, 0, BramGatewarden);
     let first = b.step();
-    assert_eq!(fired(&first, knight), Some(CardRef::Default));
+    assert_eq!(first_fired(&first, knight), Some(CardRef::Default));
     assert!(first.contains(&Event::Moved {
         unit: knight,
         from: Pos::new(0, 0),
         to: Pos::new(1, 0)
     }));
-
     let second = b.step();
-    assert_eq!(fired(&second, knight), Some(CardRef::Default));
-    assert_eq!(damage_to(&second, target), vec![attack_of(Class::Knight)]);
+    assert_eq!(damage_to(&second, target), vec![attack_of(BramGatewarden)]);
 }
 
 #[test]
 fn card_fired_comes_before_its_effects() {
     let mut b = battle(2, 1);
-    let ranger =
-        add(&mut b, Team::Player, 0, 0, Class::Ranger, &[card(Always, Attack(Target::Nearest))]);
-    dummy(&mut b, Team::Enemy, 1, 0, Class::Knight);
+    let pip =
+        add(&mut b, Team::Player, 0, 0, PipQuickfeather, &[card(Always, Attack(Target::Nearest))]);
+    dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
     let events = b.step();
-    assert_eq!(events[0], Event::CardFired { unit: ranger, card: CardRef::Node(0) });
+    assert_eq!(events[0], Event::CardFired { unit: pip, card: CardRef::Node(0) });
     assert!(matches!(events[1], Event::Attacked { .. }));
 }
 
 #[test]
 fn abilities_go_on_cooldown() {
     let mut b = battle(4, 1);
-    let ranger = add(
+    let pip = add(
         &mut b,
         Team::Player,
         0,
         0,
-        Class::Ranger,
-        &[card(Always, AimedShot(Target::Nearest)), card(Always, Hold)],
+        PipQuickfeather,
+        &[card(Always, AimedShot(Target::Nearest)), card(Always, Guard)],
     );
-    dummy(&mut b, Team::Enemy, 3, 0, Class::Knight);
-    let cooldown = Ability::AimedShot.cooldown();
-    let mut cards = Vec::new();
-    for _ in 0..=cooldown {
-        cards.push(fired(&b.step(), ranger).unwrap());
-    }
-    // Fires on tick 1, falls through while cooling down, fires again once ready.
+    let enemy = dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
+    unit_mut(&mut b, enemy).hp = 100_000;
+    unit_mut(&mut b, enemy).stats.max_hp = 100_000;
+    let cooldown = Ability::AimedShot.cooldown() as usize;
+    let cards: Vec<_> = (0..=cooldown).map(|_| first_fired(&b.step(), pip).unwrap()).collect();
     assert_eq!(cards[0], CardRef::Node(0));
-    assert!(cards[1..cooldown as usize].iter().all(|&c| c == CardRef::Node(1)));
-    assert_eq!(cards[cooldown as usize], CardRef::Node(0));
-}
-
-#[test]
-fn ability_ready_condition_tracks_cooldowns() {
-    let mut b = battle(3, 1);
-    let knight = add(
-        &mut b,
-        Team::Player,
-        0,
-        0,
-        Class::Knight,
-        &[card(AbilityReady(Ability::ShieldWall), ShieldWall), card(Always, Hold)],
-    );
-    dummy(&mut b, Team::Enemy, 2, 0, Class::Knight);
-    assert_eq!(fired(&b.step(), knight), Some(CardRef::Node(0)));
-    assert_eq!(fired(&b.step(), knight), Some(CardRef::Node(1)));
-}
-
-#[test]
-fn signals_arrive_on_the_next_tick() {
-    let mut b = battle(6, 1);
-    add(
-        &mut b,
-        Team::Player,
-        0,
-        0,
-        Class::Knight,
-        &[card(EveryNTicks(2), SendSignal(Signal::Red)), card(Always, Hold)],
-    );
-    let listener = add(
-        &mut b,
-        Team::Player,
-        1,
-        0,
-        Class::Knight,
-        &[card(SignalReceived(Signal::Red), Guard), card(Always, Hold)],
-    );
-    dummy(&mut b, Team::Enemy, 5, 0, Class::Knight);
-
-    let cards: Vec<_> = (0..4).map(|_| fired(&b.step(), listener).unwrap()).collect();
-    // Sent on tick 2 (after the listener can't see it yet), seen on tick 3 only.
-    assert_eq!(cards, vec![CardRef::Node(1), CardRef::Node(1), CardRef::Node(0), CardRef::Node(1)]);
+    assert!(cards[1..cooldown].iter().all(|&c| c == CardRef::Node(1)));
+    assert_eq!(cards[cooldown], CardRef::Node(0));
 }
 
 #[test]
 fn outnumbered_counts_units_within_two_cells() {
     let mut b = battle(4, 4);
-    let knight = add(
+    let knight = add(&mut b, Team::Player, 0, 0, BramGatewarden, &[card(Outnumbered, Guard)]);
+    dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 0, 1, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), knight), Some(CardRef::Node(0)));
+}
+
+#[test]
+fn enemy_weak_and_was_hit_conditions() {
+    let mut b = battle(3, 1);
+    let pip = add(
         &mut b,
         Team::Player,
         0,
         0,
-        Class::Knight,
-        &[card(Outnumbered, Guard), card(Always, Hold)],
+        PipQuickfeather,
+        &[card(EnemyWeak, Guard), card(WasHit, Guard)],
     );
-    dummy(&mut b, Team::Enemy, 1, 0, Class::Knight);
-    dummy(&mut b, Team::Enemy, 0, 1, Class::Knight);
-    assert_eq!(fired(&b.step(), knight), Some(CardRef::Node(0)));
+    let enemy = dummy(&mut b, Team::Enemy, 2, 0, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), pip), Some(CardRef::Default));
+    let max = max_hp_of(BramGatewarden);
+    unit_mut(&mut b, enemy).hp = max / 5;
+    assert_eq!(first_fired(&b.step(), pip), Some(CardRef::Node(0)));
+
+    let mut b = battle(2, 1);
+    let bram = add(&mut b, Team::Player, 0, 0, BramGatewarden, &[card(WasHit, Guard)]);
+    add(&mut b, Team::Enemy, 1, 0, Grub, &[]);
+    b.step(); // Bram attacks first, then Grub hits him
+    assert_eq!(first_fired(&b.step(), bram), Some(CardRef::Node(0)));
 }
 
 // ----- Targeting -------------------------------------------------------------
 
 #[test]
-fn rangers_focus_the_lowest_hp_enemy() {
+fn weakest_target_picks_lowest_hp() {
     let mut b = battle(4, 3);
-    add(&mut b, Team::Player, 0, 1, Class::Ranger, &[card(Always, Attack(Target::LowestHp))]);
-    dummy(&mut b, Team::Enemy, 1, 1, Class::Knight); // nearer, but tougher
-    let weak = dummy(&mut b, Team::Enemy, 3, 1, Class::Mage);
-    let events = b.step();
-    assert_eq!(damage_to(&events, weak), vec![attack_of(Class::Ranger)]);
+    add(&mut b, Team::Player, 0, 1, PipQuickfeather, &[card(Always, Attack(Target::Weakest))]);
+    dummy(&mut b, Team::Enemy, 1, 1, BramGatewarden);
+    let weak = dummy(&mut b, Team::Enemy, 3, 1, Tobble);
+    assert_eq!(damage_to(&b.step(), weak), vec![attack_of(PipQuickfeather)]);
 }
 
 #[test]
 fn ranged_target_picks_backliners() {
     let mut b = battle(5, 1);
-    add(&mut b, Team::Player, 0, 0, Class::Ranger, &[card(Always, Attack(Target::Ranged))]);
-    dummy(&mut b, Team::Enemy, 1, 0, Class::Knight);
-    let cleric = dummy(&mut b, Team::Enemy, 3, 0, Class::Cleric);
+    add(&mut b, Team::Player, 0, 0, PipQuickfeather, &[card(Always, Attack(Target::Ranged))]);
+    dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
+    let cleric = dummy(&mut b, Team::Enemy, 3, 0, SisterAgnes);
     assert_eq!(damage_to(&b.step(), cleric).len(), 1);
 }
 
 #[test]
 fn taunt_overrides_target_choice() {
     let mut b = battle(4, 2);
-    let knight = add(&mut b, Team::Player, 0, 0, Class::Knight, &[card(Always, Taunt)]);
-    let cleric = dummy(&mut b, Team::Player, 0, 1, Class::Cleric); // lower HP than the knight
-    add(&mut b, Team::Enemy, 2, 0, Class::Ranger, &[card(Always, Attack(Target::LowestHp))]);
+    let knight = add(&mut b, Team::Player, 0, 0, BramGatewarden, &[card(Always, Taunt)]);
+    let cleric = dummy(&mut b, Team::Player, 0, 1, SisterAgnes);
+    add(&mut b, Team::Enemy, 2, 0, PipQuickfeather, &[card(Always, Attack(Target::Weakest))]);
     let events = b.step();
-    assert_eq!(damage_to(&events, knight), vec![attack_of(Class::Ranger)]);
+    assert_eq!(damage_to(&events, knight), vec![attack_of(PipQuickfeather)]);
     assert!(damage_to(&events, cleric).is_empty());
+}
+
+#[test]
+fn marked_target_follows_the_teams_rangers() {
+    let mut b = battle(3, 4);
+    add(&mut b, Team::Player, 0, 0, PipQuickfeather, &[card(Always, Attack(Target::Nearest))]);
+    add(&mut b, Team::Player, 0, 3, Elowen, &[card(Always, Attack(Target::Marked))]);
+    let bram = dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
+    let grub = dummy(&mut b, Team::Enemy, 1, 3, Grub);
+    let events = b.step();
+    assert_eq!(damage_to(&events, bram).len(), 2, "both Rangers hit the marked enemy");
+    assert!(damage_to(&events, grub).is_empty());
+}
+
+#[test]
+fn synergy_cards_are_skipped_without_the_synergy() {
+    let mut b = battle(3, 4);
+    let elowen = add(&mut b, Team::Player, 0, 3, Elowen, &[card(Always, Attack(Target::Marked))]);
+    dummy(&mut b, Team::Enemy, 1, 3, Grub);
+    assert_eq!(first_fired(&b.step(), elowen), Some(CardRef::Default));
+}
+
+#[test]
+fn vanish_makes_the_widow_untargetable_at_first() {
+    let mut b = battle(3, 1);
+    add(&mut b, Team::Player, 0, 0, PipQuickfeather, &[card(Always, Attack(Target::Nearest))]);
+    let widow = dummy(&mut b, Team::Enemy, 1, 0, GreyWidow);
+    let bram = dummy(&mut b, Team::Enemy, 2, 0, BramGatewarden);
+    let first = b.step();
+    assert_eq!(damage_to(&first, bram).len(), 1);
+    assert!(damage_to(&first, widow).is_empty());
+    b.step();
+    assert_eq!(damage_to(&b.step(), widow).len(), 1, "targetable from tick 3");
 }
 
 // ----- Defences --------------------------------------------------------------
@@ -368,27 +417,33 @@ fn taunt_overrides_target_choice() {
 #[test]
 fn guarding_halves_damage_rounding_up() {
     let mut b = battle(2, 1);
-    let knight = add(&mut b, Team::Player, 0, 0, Class::Knight, &[card(Always, Guard)]);
-    add(&mut b, Team::Enemy, 1, 0, Class::Berserker, &[card(Always, Attack(Target::Nearest))]);
-    assert_eq!(damage_to(&b.step(), knight), vec![attack_of(Class::Berserker).div_ceil(2)]);
+    let knight = add(&mut b, Team::Player, 0, 0, BramGatewarden, &[card(Always, Guard)]);
+    add(&mut b, Team::Enemy, 1, 0, Grub, &[card(Always, Attack(Target::Nearest))]);
+    assert_eq!(damage_to(&b.step(), knight), vec![attack_of(Grub).div_ceil(2)]);
 }
 
 #[test]
 fn shield_wall_protects_adjacent_allies() {
     let mut b = battle(3, 2);
-    add(&mut b, Team::Player, 0, 0, Class::Knight, &[card(Always, ShieldWall)]);
-    let cleric = dummy(&mut b, Team::Player, 0, 1, Class::Cleric);
-    add(&mut b, Team::Enemy, 1, 1, Class::Rogue, &[card(Always, Attack(Target::Nearest))]);
-    assert_eq!(damage_to(&b.step(), cleric), vec![attack_of(Class::Rogue).div_ceil(2)]);
+    add(&mut b, Team::Player, 0, 0, SirAldric, &[card(Always, ShieldWall)]);
+    let cleric = dummy(&mut b, Team::Player, 0, 1, SisterAgnes);
+    add(&mut b, Team::Enemy, 1, 1, Nettle, &[card(Always, Attack(Target::Nearest))]);
+    assert_eq!(damage_to(&b.step(), cleric), vec![attack_of(Nettle).div_ceil(2)]);
 }
 
 #[test]
 fn sanctuary_blocks_all_damage() {
     let mut b = battle(2, 1);
-    let cleric =
-        add(&mut b, Team::Player, 0, 0, Class::Cleric, &[card(Always, Sanctuary(Target::Nearest))]);
-    add(&mut b, Team::Enemy, 1, 0, Class::Rogue, &[card(Always, Attack(Target::Nearest))]);
-    assert_eq!(damage_to(&b.step(), cleric), vec![0]);
+    let calloway = add(
+        &mut b,
+        Team::Player,
+        0,
+        0,
+        BrotherCalloway,
+        &[card(Always, Sanctuary(Target::Nearest))],
+    );
+    add(&mut b, Team::Enemy, 1, 0, Nettle, &[card(Always, Attack(Target::Nearest))]);
+    assert_eq!(damage_to(&b.step(), calloway), vec![0]);
 }
 
 // ----- Signature abilities -----------------------------------------------------
@@ -396,50 +451,85 @@ fn sanctuary_blocks_all_damage() {
 #[test]
 fn heal_skips_full_health_and_heals_the_most_hurt() {
     let mut b = battle(4, 1);
-    let cleric = add(
+    let agnes = add(
         &mut b,
         Team::Player,
         0,
         0,
-        Class::Cleric,
-        &[card(Always, Heal(Target::LowestHp)), card(Always, Hold)],
+        SisterAgnes,
+        &[card(Always, Heal(Target::Weakest)), card(Always, Guard)],
     );
-    let knight = dummy(&mut b, Team::Player, 1, 0, Class::Knight);
-    dummy(&mut b, Team::Enemy, 3, 0, Class::Knight);
-
-    assert_eq!(fired(&b.step(), cleric), Some(CardRef::Node(1)), "nobody is hurt yet");
-
-    let max = b.units[1].stats.max_hp;
-    b.units[1].hp = max / 2;
-    let events = b.step();
-    let amount = attack_of(Class::Cleric) * 4;
-    assert!(events.contains(&Event::Healed { healer: cleric, target: knight, amount }));
+    let knight = dummy(&mut b, Team::Player, 1, 0, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), agnes), Some(CardRef::Node(1)), "nobody is hurt yet");
+    unit_mut(&mut b, knight).hp = max_hp_of(BramGatewarden) / 2;
+    assert_eq!(healed(&b.step(), knight), attack_of(SisterAgnes) * 4);
 }
 
 #[test]
 fn kite_attacks_then_steps_back() {
     let mut b = battle(5, 1);
-    let ranger =
-        add(&mut b, Team::Player, 1, 0, Class::Ranger, &[card(Always, Kite(Target::Nearest))]);
-    let target = dummy(&mut b, Team::Enemy, 2, 0, Class::Knight);
+    let kestrel = add(&mut b, Team::Player, 1, 0, Kestrel, &[card(Always, Kite(Target::Nearest))]);
+    let target = dummy(&mut b, Team::Enemy, 2, 0, BramGatewarden);
     let events = b.step();
     assert_eq!(damage_to(&events, target).len(), 1);
     assert!(events.contains(&Event::Moved {
-        unit: ranger,
+        unit: kestrel,
         from: Pos::new(1, 0),
         to: Pos::new(0, 0)
     }));
 }
 
 #[test]
+fn volley_hits_every_enemy_in_range() {
+    let mut b = battle(6, 3);
+    add(&mut b, Team::Player, 0, 1, Elowen, &[card(Always, Volley)]);
+    let near = dummy(&mut b, Team::Enemy, 2, 1, BramGatewarden);
+    let edge = dummy(&mut b, Team::Enemy, 4, 1, BramGatewarden);
+    let far = dummy(&mut b, Team::Enemy, 5, 2, BramGatewarden);
+    let events = b.step();
+    let half = attack_of(Elowen) / 2;
+    assert_eq!(damage_to(&events, near), vec![half]);
+    assert_eq!(damage_to(&events, edge), vec![half]);
+    assert!(damage_to(&events, far).is_empty());
+}
+
+#[test]
+fn firebolt_hits_hard() {
+    let mut b = battle(4, 1);
+    add(&mut b, Team::Player, 0, 0, Tobble, &[card(Always, Firebolt(Target::Nearest))]);
+    let target = dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
+    assert_eq!(damage_to(&b.step(), target), vec![attack_of(Tobble) * 5 / 2]);
+}
+
+#[test]
+fn frost_nova_freezes_and_chill_adds_damage() {
+    let mut b = battle(3, 1);
+    add(
+        &mut b,
+        Team::Player,
+        0,
+        0,
+        Mirelle,
+        &[card(EnemyAdjacent, FrostNova), card(Always, Attack(Target::Nearest))],
+    );
+    let grub = add(&mut b, Team::Enemy, 1, 0, Grub, &[]);
+    let first = b.step();
+    assert_eq!(damage_to(&first, grub), vec![attack_of(Mirelle) / 2]);
+    let second = b.step();
+    assert!(second.contains(&Event::TurnSkipped { unit: grub }));
+    assert_eq!(damage_to(&second, grub), vec![attack_of(Mirelle) * 120 / 100], "frozen: +20%");
+}
+
+#[test]
 fn fireball_splashes_neighbours_of_the_target() {
     let mut b = battle(5, 3);
-    add(&mut b, Team::Player, 0, 1, Class::Mage, &[card(Always, Fireball(Target::Nearest))]);
-    let main = dummy(&mut b, Team::Enemy, 2, 1, Class::Knight);
-    let next_to = dummy(&mut b, Team::Enemy, 3, 1, Class::Knight);
-    let far = dummy(&mut b, Team::Enemy, 4, 2, Class::Knight);
+    add(&mut b, Team::Player, 0, 1, Vorn, &[card(Always, Fireball(Target::Nearest))]);
+    let main = dummy(&mut b, Team::Enemy, 2, 1, BramGatewarden);
+    let next_to = dummy(&mut b, Team::Enemy, 3, 1, BramGatewarden);
+    let far = dummy(&mut b, Team::Enemy, 4, 2, BramGatewarden);
     let events = b.step();
-    let attack = attack_of(Class::Mage);
+    let attack = attack_of(Vorn);
     assert_eq!(damage_to(&events, main), vec![attack]);
     assert_eq!(damage_to(&events, next_to), vec![attack / 2]);
     assert!(damage_to(&events, far).is_empty());
@@ -448,47 +538,92 @@ fn fireball_splashes_neighbours_of_the_target() {
 #[test]
 fn blink_escapes_to_the_safest_cell() {
     let mut b = battle(7, 1);
-    let mage = add(&mut b, Team::Player, 1, 0, Class::Mage, &[card(Always, Blink)]);
-    dummy(&mut b, Team::Enemy, 0, 0, Class::Knight);
+    let vorn = add(&mut b, Team::Player, 1, 0, Vorn, &[card(Always, Blink)]);
+    dummy(&mut b, Team::Enemy, 0, 0, BramGatewarden);
     let events = b.step();
     assert!(events.contains(&Event::Teleported {
-        unit: mage,
+        unit: vorn,
         from: Pos::new(1, 0),
         to: Pos::new(4, 0)
     }));
 }
 
 #[test]
+fn second_wind_heals_only_when_hurt() {
+    let mut b = battle(3, 1);
+    let ysolde =
+        add(&mut b, Team::Player, 0, 0, Ysolde, &[card(Always, SecondWind), card(Always, Guard)]);
+    dummy(&mut b, Team::Enemy, 2, 0, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), ysolde), Some(CardRef::Node(1)));
+    let max = max_hp_of(Ysolde);
+    unit_mut(&mut b, ysolde).hp = max / 2;
+    assert_eq!(healed(&b.step(), ysolde), max * 30 / 100);
+}
+
+#[test]
+fn mass_heal_heals_every_hurt_ally() {
+    let mut b = battle(5, 1);
+    add(&mut b, Team::Player, 0, 0, Seraphine, &[card(Always, MassHeal)]);
+    let a = dummy(&mut b, Team::Player, 1, 0, BramGatewarden);
+    let c = dummy(&mut b, Team::Player, 2, 0, PipQuickfeather);
+    dummy(&mut b, Team::Enemy, 4, 0, BramGatewarden);
+    unit_mut(&mut b, a).hp = 10;
+    unit_mut(&mut b, c).hp = 10;
+    let events = b.step();
+    let amount = attack_of(Seraphine) * 2;
+    assert_eq!(healed(&events, a), amount);
+    assert_eq!(healed(&events, c), amount);
+}
+
+#[test]
 fn backstab_needs_the_target_engaged_by_an_ally() {
     let mut b = battle(3, 1);
-    let rogue = add(
+    let nettle = add(
         &mut b,
         Team::Player,
         0,
         0,
-        Class::Rogue,
-        &[card(Always, Backstab(Target::Nearest)), card(Always, Hold)],
+        Nettle,
+        &[card(Always, Backstab(Target::Nearest)), card(Always, Guard)],
     );
-    dummy(&mut b, Team::Enemy, 1, 0, Class::Knight);
-    assert_eq!(fired(&b.step(), rogue), Some(CardRef::Node(1)), "target isn't engaged");
+    dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), nettle), Some(CardRef::Node(1)), "target isn't engaged");
 
     let mut b = battle(3, 1);
-    add(&mut b, Team::Player, 0, 0, Class::Rogue, &[card(Always, Backstab(Target::Nearest))]);
-    let target = dummy(&mut b, Team::Enemy, 1, 0, Class::Knight);
-    dummy(&mut b, Team::Player, 2, 0, Class::Knight);
-    assert_eq!(damage_to(&b.step(), target), vec![attack_of(Class::Rogue) * 3]);
+    add(&mut b, Team::Player, 0, 0, Nettle, &[card(Always, Backstab(Target::Nearest))]);
+    let target = dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
+    dummy(&mut b, Team::Player, 2, 0, BramGatewarden);
+    assert_eq!(damage_to(&b.step(), target), vec![attack_of(Nettle) * 3]);
 }
 
 #[test]
 fn shadowstep_lands_next_to_the_target() {
     let mut b = battle(5, 3);
-    let rogue =
-        add(&mut b, Team::Player, 0, 0, Class::Rogue, &[card(Always, Shadowstep(Target::Nearest))]);
-    dummy(&mut b, Team::Enemy, 2, 1, Class::Knight);
+    let vex = add(&mut b, Team::Player, 0, 0, Vex, &[card(Always, Shadowstep(Target::Nearest))]);
+    dummy(&mut b, Team::Enemy, 2, 1, BramGatewarden);
     b.step();
-    let pos = b.unit(rogue).unwrap().pos;
+    let pos = b.unit(vex).unwrap().pos;
     assert!(pos.is_adjacent(Pos::new(2, 1)));
     assert_eq!(pos.distance(Pos::new(0, 0)), 4, "should land on the far side");
+}
+
+#[test]
+fn assassinate_finishes_a_weak_enemy() {
+    let mut b = battle(5, 1);
+    let widow = add(
+        &mut b,
+        Team::Player,
+        0,
+        0,
+        GreyWidow,
+        &[card(Always, Assassinate), card(Always, Guard)],
+    );
+    let target = dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), widow), Some(CardRef::Node(1)), "nobody weak yet");
+    unit_mut(&mut b, target).hp = max_hp_of(BramGatewarden) / 5;
+    let events = b.step();
+    assert!(events.iter().any(|e| matches!(e, Event::Teleported { unit, .. } if *unit == widow)));
+    assert_eq!(damage_to(&events, target), vec![attack_of(GreyWidow) * 3]);
 }
 
 #[test]
@@ -499,34 +634,259 @@ fn frenzy_doubles_basic_attacks() {
         Team::Player,
         0,
         0,
-        Class::Berserker,
+        Hilda,
         &[card(Always, Frenzy), card(Always, Attack(Target::Nearest))],
     );
-    let target = dummy(&mut b, Team::Enemy, 1, 0, Class::Knight);
-    b.step(); // frenzy
+    let target = dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
+    b.step();
     assert_eq!(damage_to(&b.step(), target).len(), 2);
 }
 
 #[test]
-fn cleave_hits_every_adjacent_enemy() {
+fn cleave_and_rampage_hit_every_adjacent_enemy() {
     let mut b = battle(3, 3);
-    add(&mut b, Team::Player, 1, 1, Class::Berserker, &[card(Always, Cleave)]);
+    add(&mut b, Team::Player, 1, 1, Grub, &[card(Always, Cleave)]);
     let foes = [
-        dummy(&mut b, Team::Enemy, 0, 1, Class::Knight),
-        dummy(&mut b, Team::Enemy, 2, 1, Class::Knight),
-        dummy(&mut b, Team::Enemy, 1, 0, Class::Knight),
+        dummy(&mut b, Team::Enemy, 0, 1, BramGatewarden),
+        dummy(&mut b, Team::Enemy, 2, 1, BramGatewarden),
+        dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden),
     ];
     let events = b.step();
     for foe in foes {
-        assert_eq!(damage_to(&events, foe), vec![attack_of(Class::Berserker)]);
+        assert_eq!(damage_to(&events, foe), vec![attack_of(Grub)]);
     }
+
+    let mut b = battle(3, 1);
+    let korgath = add(&mut b, Team::Player, 1, 0, Korgath, &[card(Always, Rampage)]);
+    dummy(&mut b, Team::Enemy, 0, 0, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 2, 0, BramGatewarden);
+    let events = b.step();
+    assert_eq!(events.iter().filter(|e| matches!(e, Event::Attacked { .. })).count(), 2);
+    assert!(b.unit(korgath).unwrap().statuses.frenzied_until > 0);
+}
+
+// ----- Passives ----------------------------------------------------------------
+
+#[test]
+fn bulwark_reduces_damage_per_adjacent_ally() {
+    let mut b = battle(3, 2);
+    let aldric = dummy(&mut b, Team::Player, 1, 1, SirAldric);
+    dummy(&mut b, Team::Player, 0, 1, BramGatewarden);
+    dummy(&mut b, Team::Player, 1, 0, SisterAgnes);
+    add(&mut b, Team::Enemy, 2, 1, Grub, &[card(Always, Attack(Target::Nearest))]);
+    assert_eq!(damage_to(&b.step(), aldric), vec![attack_of(Grub) * 80 / 100]);
+}
+
+#[test]
+fn last_stand_halves_damage_when_low() {
+    let mut b = battle(2, 1);
+    let ysolde = dummy(&mut b, Team::Player, 0, 0, Ysolde);
+    add(&mut b, Team::Enemy, 1, 0, Grub, &[card(Always, Attack(Target::Nearest))]);
+    unit_mut(&mut b, ysolde).hp = max_hp_of(Ysolde) / 5;
+    assert_eq!(damage_to(&b.step(), ysolde), vec![attack_of(Grub).div_ceil(2)]);
+}
+
+#[test]
+fn hunters_mark_makes_allies_hit_harder() {
+    let mut b = battle(4, 2);
+    add(&mut b, Team::Player, 0, 0, Kestrel, &[card(Always, Attack(Target::Nearest))]);
+    add(&mut b, Team::Player, 0, 1, PipQuickfeather, &[card(Always, Attack(Target::Nearest))]);
+    let target = dummy(&mut b, Team::Enemy, 2, 0, BramGatewarden);
+    let events = b.step();
+    let hits = damage_to(&events, target);
+    assert_eq!(hits[0], attack_of(Kestrel));
+    assert_eq!(hits[1], attack_of(PipQuickfeather) * 115 / 100);
+}
+
+#[test]
+fn opportunist_punishes_wounded_enemies() {
+    let mut b = battle(2, 1);
+    add(&mut b, Team::Player, 0, 0, Vex, &[card(Always, Attack(Target::Nearest))]);
+    let target = dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
+    unit_mut(&mut b, target).hp = max_hp_of(BramGatewarden) / 3;
+    assert_eq!(damage_to(&b.step(), target), vec![attack_of(Vex) * 130 / 100]);
+}
+
+#[test]
+fn arcane_surge_makes_every_third_ability_crit() {
+    let mut b = battle(4, 1);
+    let vorn = add(&mut b, Team::Player, 0, 0, Vorn, &[card(Always, Fireball(Target::Nearest))]);
+    let target = dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
+    unit_mut(&mut b, target).stats.max_hp = 1_000_000;
+    unit_mut(&mut b, target).hp = 1_000_000;
+    let mut fireball_crits = Vec::new();
+    while fireball_crits.len() < 3 {
+        let events = b.step();
+        if events.iter().any(|e| matches!(e, Event::AbilityUsed { unit, .. } if *unit == vorn)) {
+            fireball_crits
+                .push(events.iter().any(|e| matches!(e, Event::Attacked { crit: true, .. })));
+        }
+    }
+    assert_eq!(fireball_crits, vec![false, false, true]);
+}
+
+#[test]
+fn bloodlust_heals_when_wounded() {
+    let mut b = battle(2, 1);
+    let hilda = add(&mut b, Team::Player, 0, 0, Hilda, &[card(Always, Attack(Target::Nearest))]);
+    dummy(&mut b, Team::Enemy, 1, 0, BramGatewarden);
+    unit_mut(&mut b, hilda).hp = 10;
+    assert_eq!(healed(&b.step(), hilda), attack_of(Hilda) / 5);
+}
+
+#[test]
+fn undying_survives_one_killing_blow() {
+    let mut b = battle(2, 1);
+    let korgath = dummy(&mut b, Team::Player, 0, 0, Korgath);
+    add(&mut b, Team::Enemy, 1, 0, Grub, &[card(Always, Attack(Target::Nearest))]);
+    unit_mut(&mut b, korgath).hp = 5;
+    let events = b.step();
+    assert!(events.contains(&Event::CheatedDeath { unit: korgath }));
+    assert_eq!(b.unit(korgath).unwrap().hp, 1);
+    let events = b.step();
+    assert!(events.contains(&Event::Died { unit: korgath }));
+}
+
+#[test]
+fn resurrection_revives_the_first_ally_to_fall_once() {
+    let mut b = battle(3, 2);
+    dummy(&mut b, Team::Player, 0, 1, Seraphine);
+    let bram = dummy(&mut b, Team::Player, 0, 0, BramGatewarden);
+    let pip = dummy(&mut b, Team::Player, 2, 1, PipQuickfeather);
+    add(&mut b, Team::Enemy, 1, 0, Grub, &[card(Always, Cleave)]);
+    unit_mut(&mut b, bram).hp = 1;
+    unit_mut(&mut b, pip).hp = 1;
+    // Grub at (1,0) is adjacent to Bram (0,0) only; move Pip next to him too.
+    unit_mut(&mut b, pip).pos = Pos::new(2, 0);
+    let events = b.step();
+    let revived: Vec<_> = events.iter().filter(|e| matches!(e, Event::Revived { .. })).collect();
+    assert_eq!(revived.len(), 1, "only the first to fall comes back");
+    assert!(b.unit(bram).unwrap().is_alive());
+    assert!(!b.unit(pip).unwrap().is_alive());
+}
+
+// ----- Synergies -----------------------------------------------------------------
+
+#[test]
+fn three_knights_unlock_a_fifth_card() {
+    let program = [
+        card(MyHpBelow(Threshold::P25), Taunt),
+        card(MyHpBelow(Threshold::P25), Guard),
+        card(MyHpBelow(Threshold::P25), Guard),
+        card(MyHpBelow(Threshold::P25), Guard),
+        card(Always, Guard),
+    ];
+    let mut b = battle(5, 2);
+    let bram = add(&mut b, Team::Player, 0, 0, BramGatewarden, &program);
+    dummy(&mut b, Team::Player, 1, 0, SirAldric);
+    dummy(&mut b, Team::Player, 2, 0, Ysolde);
+    dummy(&mut b, Team::Enemy, 4, 1, Grub);
+    assert_eq!(first_fired(&b.step(), bram), Some(CardRef::Node(4)));
+
+    let mut b = battle(5, 2);
+    let bram = add(&mut b, Team::Player, 0, 0, BramGatewarden, &program);
+    dummy(&mut b, Team::Enemy, 4, 1, Grub);
+    assert_eq!(first_fired(&b.step(), bram), Some(CardRef::Default), "fifth card is skipped");
+}
+
+#[test]
+fn three_rangers_gain_range() {
+    let mut b = battle(6, 3);
+    let pip = dummy(&mut b, Team::Player, 0, 0, PipQuickfeather);
+    dummy(&mut b, Team::Player, 0, 1, Kestrel);
+    dummy(&mut b, Team::Player, 0, 2, Elowen);
+    dummy(&mut b, Team::Enemy, 5, 0, BramGatewarden);
+    b.step();
+    assert_eq!(b.unit(pip).unwrap().stats.range, 4);
+}
+
+#[test]
+fn three_mages_cool_down_faster() {
+    let mut b = battle(6, 3);
+    let tobble =
+        add(&mut b, Team::Player, 0, 0, Tobble, &[card(Always, Firebolt(Target::Nearest))]);
+    dummy(&mut b, Team::Player, 0, 1, Mirelle);
+    dummy(&mut b, Team::Player, 0, 2, Vorn);
+    dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
+    b.step();
+    let ready = b.unit(tobble).unwrap().ready_at[Ability::Firebolt.index()];
+    assert_eq!(ready, 1 + Ability::Firebolt.cooldown() - 2);
+}
+
+#[test]
+fn clerics_unlock_signals_and_three_heal_on_receipt() {
+    let mut b = battle(6, 3);
+    let agnes =
+        add(&mut b, Team::Player, 0, 0, SisterAgnes, &[card(Always, SendSignal(Signal::Red))]);
+    let calloway = add(
+        &mut b,
+        Team::Player,
+        0,
+        1,
+        BrotherCalloway,
+        &[card(SignalReceived(Signal::Red), Guard)],
+    );
+    dummy(&mut b, Team::Enemy, 5, 0, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), agnes), Some(CardRef::Node(0)));
+    assert_eq!(first_fired(&b.step(), calloway), Some(CardRef::Node(0)), "signal seen next tick");
+
+    let mut b = battle(6, 3);
+    add(&mut b, Team::Player, 0, 0, SisterAgnes, &[card(Always, SendSignal(Signal::Red))]);
+    dummy(&mut b, Team::Player, 0, 1, BrotherCalloway);
+    let sera = dummy(&mut b, Team::Player, 0, 2, Seraphine);
+    dummy(&mut b, Team::Enemy, 5, 0, BramGatewarden);
+    unit_mut(&mut b, sera).hp = 10;
+    b.step();
+    assert_eq!(healed(&b.step(), sera), max_hp_of(Seraphine) / 10);
+}
+
+#[test]
+fn three_rogues_double_crit_chance() {
+    let mut b = Battle::new(6, 3, 100, 0);
+    let nettle = dummy(&mut b, Team::Player, 0, 0, Nettle);
+    dummy(&mut b, Team::Player, 0, 1, Vex);
+    dummy(&mut b, Team::Player, 0, 2, GreyWidow);
+    dummy(&mut b, Team::Enemy, 5, 0, BramGatewarden);
+    b.step();
+    assert_eq!(b.unit(nettle).unwrap().crit_chance, CRIT_CHANCE_PERCENT * 2);
+}
+
+#[test]
+fn fury_chains_the_next_card() {
+    let program = [card(Surrounded, Cleave), card(Always, Attack(Target::Weakest))];
+    let mut b = battle(3, 3);
+    let grub = add(&mut b, Team::Player, 1, 1, Grub, &program);
+    dummy(&mut b, Team::Player, 0, 0, Hilda);
+    dummy(&mut b, Team::Player, 2, 2, Korgath);
+    dummy(&mut b, Team::Enemy, 0, 1, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 2, 1, BramGatewarden);
+    let events = b.step();
+    assert_eq!(fired(&events, grub), vec![CardRef::Node(0), CardRef::Node(1)]);
+
+    let mut b = battle(3, 3);
+    let grub = add(&mut b, Team::Player, 1, 1, Grub, &program);
+    dummy(&mut b, Team::Player, 0, 0, Hilda);
+    dummy(&mut b, Team::Enemy, 0, 1, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 2, 1, BramGatewarden);
+    assert_eq!(fired(&b.step(), grub), vec![CardRef::Node(0)], "two Berserkers: no Fury");
+}
+
+#[test]
+fn class_only_synergy_blocks_are_skipped_for_other_classes() {
+    let mut b = battle(3, 3);
+    let nettle = add(&mut b, Team::Player, 1, 1, Nettle, &[card(Surrounded, Guard)]);
+    dummy(&mut b, Team::Player, 0, 0, Grub);
+    dummy(&mut b, Team::Player, 2, 2, Hilda);
+    dummy(&mut b, Team::Enemy, 0, 1, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 2, 1, BramGatewarden);
+    assert_eq!(first_fired(&b.step(), nettle), Some(CardRef::Default));
 }
 
 #[test]
 fn stalemate_ends_in_a_draw_at_the_tick_limit() {
     let mut b = Battle::new(4, 1, 5, 0);
-    dummy(&mut b, Team::Player, 0, 0, Class::Knight);
-    dummy(&mut b, Team::Enemy, 3, 0, Class::Knight);
+    dummy(&mut b, Team::Player, 0, 0, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 3, 0, BramGatewarden);
     assert_eq!(b.run_to_end(), Outcome::Draw);
     assert_eq!(b.tick(), 5);
 }
