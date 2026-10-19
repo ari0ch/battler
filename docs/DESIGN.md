@@ -145,10 +145,21 @@ Run summary → Main menu.
 - **Result:** win/loss, HP lost, and a gold breakdown for next round.
 - **Game over:** victory or defeat, rounds survived, then the run summary.
 - **Run summary:** stats per round and a replay of any battle from its seed.
-- **Art (Oct 2026):** 18 character sprites, 32×32, facing right, drawn at 2× on the
-  board and 1× on the bench, shop and program header; enemies are mirrored. They are
-  embedded in the binary (`crates/game/assets/sprites`). Monsters have no art yet and
-  show their initials.
+- **Art (Oct 2026):** 18 character sprites and 8 monster sprites, 32×32, facing right,
+  drawn at 2× on the board and 1× on the bench, shop and program header; enemies are
+  mirrored; **bosses are drawn at 3×** in battle. All embedded in the binary
+  (`crates/game/assets/sprites`).
+- **UI style (agreed Oct 2026): fantasy cartoon pixel art.** Inspired by Darkest Dungeon
+  (heavy framed panels) and Ultima (parchment, wax seals), but bright and friendly, not
+  gritty. Warm plum ground, wooden header and shop bars, gold-cornered wood panels for
+  light text and parchment panels for dark ink text, plank and gold buttons, blue
+  condition / orange action / purple signature tags, bronze / silver / gold rarity
+  frames, kit bars and icons. Font: **Pixelify Sans** (OFL), embedded. The kit is drawn
+  at 1x by `tools/art/kit.py` and shown at 2x. Mockups: the design canvas, row "Fantasy
+  art pass".
+- **Board look (agreed):** planning shows one grass field with grid lines over it (not
+  separate tiles); battle shows open grass with no grid, a red tint on the enemy half
+  and team-coloured shadows under units. Next: free-looking unit movement in battle.
 
 ### Shop and bench
 

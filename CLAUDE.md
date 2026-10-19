@@ -59,15 +59,22 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   palette) and editing logic. `cards.rs`: all block/character/synergy wording and tooltips.
 - Tooltips: add `Hovered::default()` plus a `ui::Tooltip` to any entity; one shared
   floating panel shows it.
-- `sprites.rs`: the 18 character sprites (32x32 PNGs in `crates/game/assets/sprites`),
-  embedded with `include_bytes!` and decoded once into the `Sprites` resource. Draw them
-  with `sprite_node` at whole-number scales (2x on the board) so pixels stay crisp.
+- `sprites.rs`: the 18 character and 8 monster sprites (32x32 PNGs in
+  `crates/game/assets/sprites`), embedded with `include_bytes!` and decoded once into
+  the `Sprites` resource. Draw them with `sprite_node` at whole-number scales (2x on the
+  board, `battle_scale` for bosses) so pixels stay crisp.
+- `kit.rs`: the fantasy UI kit (`assets/ui`) and the Pixelify Sans font, as **constant
+  handles** (`kit::img::PANEL_WOOD`, `kit::FONT`) made with `uuid_handle!` and inserted
+  at startup, so builders use them without a resource. Helpers: `sliced` (9-slice,
+  corners at 2x), `tiled`, `icon`, `spawn_bar`, `wood_panel` (light text),
+  `parchment_panel` (use `color::INK*` text on it). Buttons take a `ui::Skin` (wood, gold,
+  pressed, parchment, flat). Regenerate art with `tools/art/`.
 - Boards are drawn rotated from sim coordinates: lanes (`y`) across the screen, depth
   (`x`) up the screen with the enemy half above. Planning shows only the player's half.
 - Screens rebuild from state whenever the `Rev` resource is bumped (every applied
   action, every state entry). Fast-changing bits (timer, toasts, battle animation)
   update in place via marker components, so a rebuild never interrupts a drag.
-- Text must be ASCII: Bevy's built-in font only covers ASCII.
+- Text uses `ui::text` / `ui::heading` / `ui::outlined` (the kit font). Keep it ASCII.
 - Bevy 0.20 source is the best API reference: `git clone --depth 1 --branch v0.20.0
   --filter=blob:none --sparse https://github.com/bevyengine/bevy` and sparse-checkout
   `examples/ui` and the crate sources you need.
