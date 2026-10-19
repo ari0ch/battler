@@ -2,9 +2,10 @@
 //! character, "click to cycle" settings, and tooltip builders.
 //! Text is plain ASCII because Bevy's built-in font only covers ASCII.
 
+use battler_sim::run::{Lobby, Opponent, RoundKind};
 use battler_sim::{
     Ability, Action, Character, Class, Condition, Level, Node, Program, Rarity, Requirement, Scope,
-    Signal, Synergies, Target, Threshold, Unlocks, palette_actions, palette_conditions,
+    Signal, Synergies, Target, Threshold, UnitKind, Unlocks, palette_actions, palette_conditions,
 };
 use bevy::prelude::Color;
 
@@ -12,8 +13,27 @@ use crate::state::DraftCard;
 use crate::ui::{Block, Tooltip, color};
 
 /// Two letters for unit tiles until there's art.
-pub fn initials(c: Character) -> String {
-    c.short_name().chars().take(2).collect()
+/// Two letters for a unit tile. Takes a character or a monster.
+pub fn initials(kind: impl Into<UnitKind>) -> String {
+    kind.into().short_name().chars().take(2).collect()
+}
+
+/// Who a round is against, for headers and the result screen.
+pub fn opponent_label(lobby: &Lobby, opponent: Opponent) -> String {
+    match opponent {
+        Opponent::Monsters(wave) => wave.name().to_string(),
+        Opponent::Player(id) => lobby.player(id).name().to_string(),
+        Opponent::Ghost(id) => format!("{}'s ghost", lobby.player(id).name()),
+    }
+}
+
+/// What a round will be, before it's fought.
+pub fn round_label(kind: RoundKind) -> String {
+    match kind {
+        RoundKind::Pve(wave) if wave.is_boss() => format!("Boss: {}", wave.name()),
+        RoundKind::Pve(wave) => format!("Monsters: {}", wave.name()),
+        RoundKind::Versus => "Versus".to_string(),
+    }
 }
 
 pub fn rarity_color(r: Rarity) -> Color {

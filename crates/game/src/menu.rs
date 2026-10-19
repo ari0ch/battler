@@ -97,7 +97,9 @@ fn rebuild(
 }
 
 const HOW_TO: &[&str] = &[
-    "Each round has a timed planning phase, then a battle you watch.",
+    "You and seven bots share one pool of characters. Last one standing wins.",
+    "Each round has a timed planning phase, then a battle you watch. Rounds 1-3",
+    "are monsters, and a boss comes every 4 rounds from round 7.",
     "Buy characters in the shop (1-3 gold by rarity). Three copies merge",
     "into the next level, which adds a card slot. One copy of each on the board.",
     "Your player level is your board size. Buy XP to level up: higher levels",
@@ -106,5 +108,5 @@ const HOW_TO: &[&str] = &[
     "Each tick a unit runs the first card that applies; otherwise it attacks",
     "the nearest enemy. Drag blocks into cards; click one to change it.",
     "Two of a class on the board unlocks its synergy. Hover anything for details.",
-    "Losing a battle costs HP. Unspent gold earns interest. Survive 15 rounds.",
+    "Losing a battle costs HP. Unspent gold earns interest.",
 ];

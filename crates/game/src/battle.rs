@@ -5,14 +5,14 @@
 
 use std::collections::HashMap;
 
-use battler_sim::run::BattleSetup;
+use battler_sim::run::{BattleSetup, Opponent};
 use battler_sim::{Battle, CardRef, Class, Event, Outcome, Pos, StatusKind, Team, UnitId};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
 use crate::cards;
 use crate::planning::spawn_pips;
-use crate::state::{AppState, GameRun, LastReport, Planning, Rev, RunPhase, Settings};
+use crate::state::{AppState, GameRun, LastReport, LobbyExt, Planning, Rev, RunPhase, Settings};
 use crate::ui::{self, SECONDARY, TOGGLED, UiAction, color, column, row, spawn_button, text};
 
 pub struct BattlePlugin;
@@ -46,6 +46,8 @@ pub struct Playback {
     pub setup: BattleSetup,
     pub battle: Battle,
     pub replay: bool,
+    /// Who the human is fighting, for labels.
+    pub opponent: Option<Opponent>,
     /// Seconds into the current tick.
     timer: f32,
     /// Where each unit was before the latest tick, to glide from.
@@ -61,13 +63,14 @@ pub struct Playback {
 }
 
 impl Playback {
-    pub fn new(setup: BattleSetup, replay: bool) -> Self {
+    pub fn new(setup: BattleSetup, replay: bool, opponent: Option<Opponent>) -> Self {
         let battle = setup.build();
         let prev = battle.units().iter().map(|u| (u.id, u.pos)).collect();
         Self {
             setup,
             battle,
             replay,
+            opponent,
             timer: 0.0,
             prev,
             fired: HashMap::new(),
@@ -135,6 +138,10 @@ fn rebuild(
         ui::spawn_stage(&mut commands, (BattleRoot, DespawnOnExit(RunPhase::Battle)), color::BG)
     };
     let battle = &pb.battle;
+    let enemy_name = match (&run, pb.opponent) {
+        (Some(run), Some(o)) => cards::opponent_label(&run.0, o),
+        _ => "Enemy warband".to_string(),
+    };
     commands.entity(stage).with_children(|stage| {
         // Header.
         stage
@@ -151,7 +158,7 @@ fn rebuild(
                         format!("Round {} - Battle", pb.setup.round)
                     };
                     c.spawn(text(title, 20.0, color::TEXT));
-                    c.spawn(text(format!("Seed {}", pb.setup.seed % 100_000), 13.0, color::MUTED));
+                    c.spawn(text(format!("vs {enemy_name}"), 13.0, color::RED_TEXT));
                 });
                 h.spawn(Node { flex_grow: 1.0, justify_content: JustifyContent::Center, ..row(8.0) }).with_children(|c| {
                     c.spawn((text(format!("Tick {}", battle.tick()), 16.0, color::MUTED), TickText, Node { width: px(80), ..default() }));
@@ -168,8 +175,8 @@ fn rebuild(
                 });
                 h.spawn(Node { width: px(200), justify_content: JustifyContent::FlexEnd, ..row(22.0) }).with_children(|r| {
                     if let Some(run) = &run {
-                        r.spawn(text(format!("HP {}", run.0.hp()), 18.0, color::TEXT));
-                        r.spawn(text(format!("{} g", run.0.gold()), 18.0, color::GOLD_LIGHT));
+                        r.spawn(text(format!("HP {}", run.0.me().hp()), 18.0, color::TEXT));
+                        r.spawn(text(format!("{} g", run.0.me().gold()), 18.0, color::GOLD_LIGHT));
                     }
                 });
             });
@@ -182,7 +189,7 @@ fn rebuild(
                     .with_children(|left| {
                         left.spawn(Node { width: px(BOARD_W), justify_content: JustifyContent::SpaceBetween, ..row(0.0) }).with_children(|r| {
                             r.spawn(text("Your warband", 13.0, color::BLUE_TEXT));
-                            r.spawn(text("Enemy warband", 13.0, color::RED_TEXT));
+                            r.spawn(text(enemy_name.clone(), 13.0, color::RED_TEXT));
                         });
                         left.spawn((Node { width: px(BOARD_W), height: px(BOARD_H), ..default() }, BoardLayer))
                             .with_children(|board| {
@@ -294,8 +301,11 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit) {
                 BorderColor::all(ring),
             ))
             .with_children(|t| {
-                t.spawn(text(cards::initials(unit.character), 17.0, ink));
-                spawn_pips(t, unit.level);
+                t.spawn(text(cards::initials(unit.kind), 17.0, ink));
+                // Monsters don't level up, so they show no pips.
+                if unit.kind.character().is_some() {
+                    spawn_pips(t, unit.level);
+                }
                 t.spawn((text("", 10.0, color::GOLD_LIGHT), StatusLetters(unit.id)));
             });
         });
@@ -354,7 +364,10 @@ fn advance(
         if pb.replay {
             next_app.set(AppState::GameOver);
         } else if let Some(run) = run.as_mut() {
-            let report = run.0.resolve(&pb.battle);
+            // The lobby re-plays every battle of the round from its setup, so
+            // this result matches the one just watched.
+            run.0.resolve();
+            let report = run.0.me().history().last().expect("just played").1.clone();
             planning.level_up(&report.level_ups);
             commands.insert_resource(LastReport(report));
             if let Some(mut next) = next_phase {
@@ -589,11 +602,11 @@ fn refresh_trace(
                 let head =
                     if unit.team == Team::Player { color::BLUE_TEXT } else { color::RED_TEXT };
                 c.spawn(column(2.0)).with_children(|u| {
-                    u.spawn(text(
-                        format!("{} L{}", unit.character.short_name(), unit.level.number()),
-                        12.0,
-                        head,
-                    ));
+                    let name = match unit.kind.character() {
+                        Some(c) => format!("{} L{}", c.short_name(), unit.level.number()),
+                        None => unit.kind.short_name().to_string(),
+                    };
+                    u.spawn(text(name, 12.0, head));
                     let fired = pb.fired.get(&unit.id).copied();
                     let fired_at = match fired {
                         Some(CardRef::Node(n)) => Some(n),

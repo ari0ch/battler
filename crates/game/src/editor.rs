@@ -3,14 +3,14 @@
 //! into cards; clicking a placed block cycles its setting. Every change is
 //! written straight into the run, so a card only "counts" once it has an action.
 
-use battler_sim::run::{Location, OwnedUnit, Run};
+use battler_sim::run::{Command, Lobby, Location, OwnedUnit, Player};
 use battler_sim::{Ability, Action, Character, Condition, Unlocks};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::Button;
 
 use crate::cards::{self, action_label, cond_label};
-use crate::state::{DraftCard, Planning, RunPhase};
+use crate::state::{DraftCard, LobbyExt, Planning, RunPhase};
 use crate::ui::{
     self, Block, Clickable, DragSource, DropTarget, Slot, UiAction, color, column, row, text,
 };
@@ -42,13 +42,16 @@ fn track_hover(chips: Query<(&PaletteAbility, &Hovered)>, mut hovered: ResMut<Ho
 // ----- Editing logic (called from `actions.rs`) ------------------------
 
 /// The selected unit and where it is, if the selection is still valid.
-pub fn selected_unit<'a>(run: &'a Run, planning: &Planning) -> Option<(Location, &'a OwnedUnit)> {
+pub fn selected_unit<'a>(
+    run: &'a Player,
+    planning: &Planning,
+) -> Option<(Location, &'a OwnedUnit)> {
     let loc = run.locate(planning.selected?)?;
     Some((loc, run.unit_at(loc)?))
 }
 
 /// Loads the selected unit's program into the draft.
-pub fn load_draft(run: &Run, planning: &mut Planning) {
+pub fn load_draft(run: &Player, planning: &mut Planning) {
     planning.draft = selected_unit(run, planning)
         .map(|(_, u)| cards::program_to_draft(&u.program))
         .unwrap_or_default();
@@ -56,10 +59,10 @@ pub fn load_draft(run: &Run, planning: &mut Planning) {
 
 /// Tries a new draft: if the program it makes is legal, keep it and save it
 /// to the unit; otherwise leave everything unchanged and explain why.
-fn try_draft(run: &mut Run, planning: &mut Planning, draft: Vec<DraftCard>) {
-    let Some((loc, _)) = selected_unit(run, planning) else { return };
-    match run.set_program(loc, cards::draft_to_program(&draft)) {
-        Ok(()) => planning.draft = draft,
+fn try_draft(lobby: &mut Lobby, planning: &mut Planning, draft: Vec<DraftCard>) {
+    let Some((loc, _)) = selected_unit(lobby.me(), planning) else { return };
+    match lobby.act(Command::SetProgram(loc, cards::draft_to_program(&draft))) {
+        Ok(_) => planning.draft = draft,
         Err(e) => planning.toast(e.to_string()),
     }
 }
@@ -79,7 +82,13 @@ fn put(card: &mut DraftCard, block: Block) {
 }
 
 /// Drops a block into a specific card (an index one past the end starts a new card).
-pub fn drop_block(run: &mut Run, planning: &mut Planning, card: usize, slot: Slot, block: Block) {
+pub fn drop_block(
+    lobby: &mut Lobby,
+    planning: &mut Planning,
+    card: usize,
+    slot: Slot,
+    block: Block,
+) {
     if slot_of(block) != slot {
         planning.toast(match slot {
             Slot::Cond => "That slot takes a condition",
@@ -87,8 +96,8 @@ pub fn drop_block(run: &mut Run, planning: &mut Planning, card: usize, slot: Slo
         });
         return;
     }
-    let Some((_, unit)) = selected_unit(run, planning) else { return };
-    let max = run.synergies().card_slots(unit.character, unit.level);
+    let Some((_, unit)) = selected_unit(lobby.me(), planning) else { return };
+    let max = lobby.me().synergies().card_slots(unit.character, unit.level);
     let mut draft = planning.draft.clone();
     if card >= draft.len() {
         if draft.len() >= max {
@@ -99,52 +108,52 @@ pub fn drop_block(run: &mut Run, planning: &mut Planning, card: usize, slot: Slo
     }
     let index = card.min(draft.len() - 1);
     put(&mut draft[index], block);
-    try_draft(run, planning, draft);
+    try_draft(lobby, planning, draft);
 }
 
 /// Clicking a palette block: fill the first card missing that kind of block,
 /// or start a new card.
-pub fn click_block(run: &mut Run, planning: &mut Planning, block: Block) {
+pub fn click_block(lobby: &mut Lobby, planning: &mut Planning, block: Block) {
     let first_gap = planning.draft.iter().position(|c| match block {
         Block::Cond(_) => c.cond.is_none(),
         Block::Act(_) => c.act.is_none(),
     });
     let card = first_gap.unwrap_or(planning.draft.len());
-    drop_block(run, planning, card, slot_of(block), block);
+    drop_block(lobby, planning, card, slot_of(block), block);
 }
 
-pub fn cycle_slot(run: &mut Run, planning: &mut Planning, card: usize, slot: Slot) {
-    let Some((_, unit)) = selected_unit(run, planning) else { return };
+pub fn cycle_slot(lobby: &mut Lobby, planning: &mut Planning, card: usize, slot: Slot) {
+    let Some((_, unit)) = selected_unit(lobby.me(), planning) else { return };
     let character = unit.character;
-    let unlocks = run.unlocks();
+    let unlocks = lobby.me().unlocks();
     let mut draft = planning.draft.clone();
     let Some(c) = draft.get_mut(card) else { return };
     match slot {
         Slot::Cond => c.cond = c.cond.map(cards::cycle_condition),
         Slot::Act => c.act = c.act.map(|a| cards::cycle_action(a, &unlocks, character)),
     }
-    try_draft(run, planning, draft);
+    try_draft(lobby, planning, draft);
 }
 
-pub fn clear_card(run: &mut Run, planning: &mut Planning, card: usize) {
+pub fn clear_card(lobby: &mut Lobby, planning: &mut Planning, card: usize) {
     let mut draft = planning.draft.clone();
     if card < draft.len() {
         draft.remove(card);
-        try_draft(run, planning, draft);
+        try_draft(lobby, planning, draft);
     }
 }
 
-pub fn card_up(run: &mut Run, planning: &mut Planning, card: usize) {
+pub fn card_up(lobby: &mut Lobby, planning: &mut Planning, card: usize) {
     let mut draft = planning.draft.clone();
     if card > 0 && card < draft.len() {
         draft.swap(card, card - 1);
-        try_draft(run, planning, draft);
+        try_draft(lobby, planning, draft);
     }
 }
 
 // ----- Program column UI -----------------------------------------------
 
-pub fn spawn_program_panel(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
+pub fn spawn_program_panel(parent: &mut ChildSpawnerCommands, run: &Player, planning: &Planning) {
     parent
         .spawn(ui::panel(Node {
             flex_grow: 1.0,
@@ -238,7 +247,7 @@ fn header(p: &mut ChildSpawnerCommands, unit: &OwnedUnit, loc: Location) {
     });
 }
 
-fn cards_list(p: &mut ChildSpawnerCommands, run: &Run, planning: &Planning, unit: &OwnedUnit) {
+fn cards_list(p: &mut ChildSpawnerCommands, run: &Player, planning: &Planning, unit: &OwnedUnit) {
     let max = run.synergies().card_slots(unit.character, unit.level);
     let unlocks = run.unlocks();
     p.spawn(column(5.0)).with_children(|list| {

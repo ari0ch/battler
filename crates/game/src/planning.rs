@@ -1,18 +1,17 @@
 //! The timed planning phase, all on one screen: header, synergy tracker, board
 //! and bench, the selected unit's program (see `editor.rs`), and the shop.
 
-use battler_sim::run::economy::{
-    BENCH_SIZE, BOARD_HEIGHT, BOARD_WIDTH, PLAYER_COLUMNS, REROLL_COST, XP_COST,
-};
-use battler_sim::run::{Location, OwnedUnit, Run};
-use battler_sim::{Class, Level, Pos};
+use battler_sim::run::economy::{BENCH_SIZE, BOARD_HEIGHT, PLAYER_COLUMNS, REROLL_COST, XP_COST};
+use battler_sim::run::{Lobby, Location, OwnedUnit, Player, RoundKind};
+use battler_sim::{Class, Level, Pos, Wave};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::Button;
 
 use crate::cards;
 use crate::editor::{self, HoveredAbility};
-use crate::state::{GameRun, Planning, Rev, RunPhase};
+use crate::result::ordinal;
+use crate::state::{GameRun, LobbyExt, ME, Planning, Rev, RunPhase};
 use crate::ui::{
     self, ActionQueue, Clickable, DragSource, DropTarget, PRIMARY, SECONDARY, UiAction, color,
     column, row, spawn_button, text,
@@ -37,18 +36,18 @@ const BOARD_PX: f32 = CELL * 8.0 + GAP * 7.0;
 const TILE: f32 = 58.0;
 
 /// Seconds allowed for planning this round.
-pub fn planning_seconds(run: &Run) -> f32 {
+pub fn planning_seconds(run: &Player) -> f32 {
     let units = run.board().len() + run.bench().iter().flatten().count();
     if units >= 5 { 75.0 } else { 60.0 }
 }
 
 fn enter(run: Res<GameRun>, mut planning: ResMut<Planning>, mut rev: ResMut<Rev>) {
-    planning.time_left = planning_seconds(&run.0);
+    planning.time_left = planning_seconds(run.0.me());
     planning.toast = None;
-    if planning.selected.is_some_and(|id| run.0.locate(id).is_none()) {
+    if planning.selected.is_some_and(|id| run.0.me().locate(id).is_none()) {
         planning.selected = None;
     }
-    editor::load_draft(&run.0, &mut planning);
+    editor::load_draft(run.0.me(), &mut planning);
     rev.bump();
 }
 
@@ -111,7 +110,7 @@ fn tick_timers(
     for mut t in &mut timer_text {
         **t = format!("{}:{:02}", secs / 60, secs % 60);
     }
-    let total = planning_seconds(&run.0);
+    let total = planning_seconds(run.0.me());
     for mut n in &mut timer_bar {
         n.width = percent(100.0 * planning.time_left / total);
     }
@@ -148,7 +147,7 @@ fn update_cells(
     hovered_ability: Res<HoveredAbility>,
     mut cells: Query<(&CellView, &Hovered, &mut BackgroundColor, &mut BorderColor)>,
 ) {
-    let selected = editor::selected_unit(&run.0, &planning);
+    let selected = editor::selected_unit(run.0.me(), &planning);
     let reach = match (hovered_ability.0, selected) {
         (Some(a), Some((Location::Board(origin), unit))) => {
             Some((origin, cards::ability_reach(a, unit.character)))
@@ -185,14 +184,15 @@ fn rebuild(
     for e in &roots {
         commands.entity(e).despawn();
     }
-    let run = &run.0;
+    let lobby = &run.0;
+    let run = lobby.me();
     let stage = ui::spawn_stage(
         &mut commands,
         (PlanningRoot, DespawnOnExit(RunPhase::Planning)),
         color::BG,
     );
     commands.entity(stage).with_children(|stage| {
-        header(stage, run, &planning);
+        header(stage, lobby, &planning);
         stage
             .spawn(Node {
                 flex_grow: 1.0,
@@ -205,7 +205,7 @@ fn rebuild(
                 synergy_column(body, run);
                 body.spawn(Node { width: px(BOARD_PX), flex_shrink: 0.0, ..column(8.0) })
                     .with_children(|mid| {
-                        board_section(mid, run, &planning);
+                        board_section(mid, lobby, &planning);
                         bench_section(mid, run, &planning);
                     });
                 editor::spawn_program_panel(body, run, &planning);
@@ -215,7 +215,8 @@ fn rebuild(
     });
 }
 
-fn header(stage: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
+fn header(stage: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Planning) {
+    let run = lobby.me();
     stage
         .spawn((
             Node {
@@ -230,8 +231,13 @@ fn header(stage: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
         ))
         .with_children(|h| {
             h.spawn(Node { width: px(110), ..column(2.0) }).with_children(|c| {
-                c.spawn(text(format!("Round {}", run.round()), 19.0, color::TEXT));
-                c.spawn(text("Planning", 12.0, color::MUTED));
+                c.spawn(text(format!("Round {}", lobby.round()), 19.0, color::TEXT));
+                let (kind, ink) = match lobby.round_kind() {
+                    RoundKind::Pve(w) if w.is_boss() => ("Boss round", color::BAD),
+                    RoundKind::Pve(_) => ("Monster round", color::GOOD),
+                    RoundKind::Versus => ("Versus", color::MUTED),
+                };
+                c.spawn(text(kind, 12.0, ink));
             });
             h.spawn(Node { width: px(340), ..row(12.0) }).with_children(|lv| {
                 lv.spawn(Node { width: px(170), ..column(5.0) }).with_children(|c| {
@@ -375,7 +381,7 @@ fn notice(stage: &mut ChildSpawnerCommands, planning: &Planning) {
 }
 
 /// The synergy tracker: each class on the board (and bench-only ones, faded).
-fn synergy_column(parent: &mut ChildSpawnerCommands, run: &Run) {
+fn synergy_column(parent: &mut ChildSpawnerCommands, run: &Player) {
     let synergies = run.synergies();
     let on_bench: Vec<Class> = run.bench().iter().flatten().map(|u| u.class()).collect();
     let mut classes: Vec<Class> = Class::ALL
@@ -515,7 +521,7 @@ fn spawn_card_dots(parent: &mut ChildSpawnerCommands, filled: usize, max: usize)
 /// A draggable, clickable unit tile with a tooltip.
 fn unit_tile(
     parent: &mut ChildSpawnerCommands,
-    run: &Run,
+    run: &Player,
     unit: &OwnedUnit,
     loc: Location,
     size: f32,
@@ -567,7 +573,13 @@ fn unit_tile(
         });
 }
 
-fn board_section(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
+fn board_section(parent: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Planning) {
+    let run = lobby.me();
+    let enemy_title = match lobby.round_kind() {
+        RoundKind::Pve(w) if w.is_boss() => format!("Next: boss - {}", w.name()),
+        RoundKind::Pve(w) => format!("Next: monsters - {}", w.name()),
+        RoundKind::Versus => format!("Next: versus - {} players left", lobby.alive_count()),
+    };
     parent.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(0.0) }).with_children(
         |r| {
             r.spawn(text(
@@ -575,62 +587,148 @@ fn board_section(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planni
                 12.0,
                 color::MUTED,
             ));
-            r.spawn(text("Enemy side - hidden until battle", 12.0, color::MUTED));
+            r.spawn(text(enemy_title, 12.0, color::MUTED));
         },
     );
-    parent.spawn(column(GAP)).with_children(|board| {
-        for y in 0..BOARD_HEIGHT {
-            board.spawn(row(GAP)).with_children(|cells| {
-                for x in 0..BOARD_WIDTH {
-                    let pos = Pos::new(x, y);
-                    let cell_node = Node {
-                        width: px(CELL),
-                        height: px(CELL),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        border: UiRect::all(px(1)),
-                        border_radius: BorderRadius::all(px(7)),
-                        ..default()
-                    };
-                    if x >= PLAYER_COLUMNS {
-                        cells.spawn((
-                            cell_node,
-                            BackgroundColor(color::CELL_ENEMY),
-                            BorderColor::all(color::LINE),
-                        ));
-                        continue;
-                    }
-                    cells
-                        .spawn((
-                            Button,
-                            Hovered::default(),
-                            Clickable(UiAction::ClickCell(pos)),
-                            DropTarget::Cell(pos),
-                            CellView(pos),
-                            cell_node,
-                            BackgroundColor(color::CELL),
-                            BorderColor::all(color::LINE),
-                        ))
-                        .with_children(|cell| {
-                            let loc = Location::Board(pos);
-                            if let Some(unit) = run.unit_at(loc) {
-                                unit_tile(
-                                    cell,
-                                    run,
-                                    unit,
-                                    loc,
-                                    TILE,
-                                    planning.selected == Some(unit.id),
-                                );
-                            }
-                        });
-                }
+    parent.spawn(row(GAP)).with_children(|halves| {
+        halves.spawn(column(GAP)).with_children(|board| player_half(board, run, planning));
+        halves
+            .spawn((
+                Node {
+                    width: px(CELL * 4.0 + GAP * 3.0),
+                    height: px(CELL * 5.0 + GAP * 4.0),
+                    padding: UiRect::all(px(12)),
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(8)),
+                    overflow: Overflow::clip(),
+                    ..column(6.0)
+                },
+                BackgroundColor(color::CELL_ENEMY),
+                BorderColor::all(color::LINE),
+            ))
+            .with_children(|side| match lobby.round_kind() {
+                RoundKind::Pve(wave) => wave_preview(side, wave),
+                RoundKind::Versus => standings(side, lobby),
             });
-        }
     });
 }
 
-fn bench_section(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planning) {
+/// What the monsters of a PvE round are, before the battle.
+fn wave_preview(parent: &mut ChildSpawnerCommands, wave: Wave) {
+    let ink = if wave.is_boss() { color::BAD } else { color::GOOD };
+    parent.spawn(text(wave.name(), 17.0, ink));
+    parent.spawn(text(wave.hint(), 12.0, color::TEXT));
+    let mut names: Vec<(&str, usize)> = Vec::new();
+    for (_, spec) in wave.units() {
+        let name = spec.kind.name();
+        match names.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, count)) => *count += 1,
+            None => names.push((name, 1)),
+        }
+    }
+    parent.spawn(Node { height: px(4), ..default() });
+    for (name, count) in names {
+        let label = if count > 1 { format!("{count} x {name}") } else { name.to_string() };
+        parent.spawn(text(label, 13.0, color::RED_TEXT));
+    }
+    let stakes = if wave.is_boss() {
+        "Win: gold reward. Lose: 2 + round number HP."
+    } else {
+        "Win: a little gold. Lose: 2 HP."
+    };
+    parent
+        .spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, Pickable::IGNORE))
+        .with_child(text(stakes, 11.0, color::FAINT));
+}
+
+/// Every player's health, best first. Opponents are drawn when the battle starts.
+fn standings(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
+    parent.spawn(text("Standings", 13.0, color::MUTED));
+    let mut players: Vec<&Player> = lobby.players().iter().collect();
+    players.sort_by_key(|p| {
+        (std::cmp::Reverse(p.is_alive()), std::cmp::Reverse(p.hp()), p.placement())
+    });
+    for p in players {
+        let me = p.id() == ME;
+        let alive = p.is_alive();
+        let name_ink = if me {
+            color::GOLD_LIGHT
+        } else if alive {
+            color::TEXT
+        } else {
+            color::FAINT
+        };
+        parent.spawn(row(8.0)).with_children(|r| {
+            r.spawn(Node { width: px(88), ..default() }).with_child(text(p.name(), 13.0, name_ink));
+            if alive {
+                r.spawn((
+                    Node {
+                        width: px(90),
+                        height: px(6),
+                        border_radius: BorderRadius::all(px(3)),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    BackgroundColor(color::LINE),
+                ))
+                .with_child((
+                    Node { width: percent(p.hp() as f32), height: px(6), ..default() },
+                    BackgroundColor(if me { color::GOLD } else { color::HP_FILL }),
+                ));
+                r.spawn(text(format!("{} - L{}", p.hp(), p.level()), 12.0, color::MUTED));
+            } else {
+                let place = p.placement().map(ordinal).unwrap_or_default();
+                r.spawn(text(format!("out - {place}"), 12.0, color::FAINT));
+            }
+        });
+    }
+}
+
+/// The four player columns of the board, as rows of droppable cells.
+fn player_half(board: &mut ChildSpawnerCommands, run: &Player, planning: &Planning) {
+    for y in 0..BOARD_HEIGHT {
+        board.spawn(row(GAP)).with_children(|cells| {
+            for x in 0..PLAYER_COLUMNS {
+                let pos = Pos::new(x, y);
+                let cell_node = Node {
+                    width: px(CELL),
+                    height: px(CELL),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(7)),
+                    ..default()
+                };
+                cells
+                    .spawn((
+                        Button,
+                        Hovered::default(),
+                        Clickable(UiAction::ClickCell(pos)),
+                        DropTarget::Cell(pos),
+                        CellView(pos),
+                        cell_node,
+                        BackgroundColor(color::CELL),
+                        BorderColor::all(color::LINE),
+                    ))
+                    .with_children(|cell| {
+                        let loc = Location::Board(pos);
+                        if let Some(unit) = run.unit_at(loc) {
+                            unit_tile(
+                                cell,
+                                run,
+                                unit,
+                                loc,
+                                TILE,
+                                planning.selected == Some(unit.id),
+                            );
+                        }
+                    });
+            }
+        });
+    }
+}
+
+fn bench_section(parent: &mut ChildSpawnerCommands, run: &Player, planning: &Planning) {
     let used = run.bench().iter().flatten().count();
     parent
         .spawn(Node {
@@ -670,7 +768,7 @@ fn bench_section(parent: &mut ChildSpawnerCommands, run: &Run, planning: &Planni
     });
 }
 
-fn shop(stage: &mut ChildSpawnerCommands, run: &Run) {
+fn shop(stage: &mut ChildSpawnerCommands, run: &Player) {
     stage
         .spawn((
             Node {

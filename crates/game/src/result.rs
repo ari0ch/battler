@@ -1,12 +1,12 @@
 //! The round result screen, and game over with the run summary.
 
-use battler_sim::run::{RoundReport, RunStatus};
-use battler_sim::{Outcome, Team};
+use battler_sim::run::economy::LOBBY_SIZE;
+use battler_sim::run::{Lobby, Opponent, RoundReport, RunStatus, round_kind};
 use bevy::prelude::*;
 
 use crate::cards;
 use crate::planning::spawn_pips;
-use crate::state::{AppState, GameRun, LastReport, Rev, RunPhase};
+use crate::state::{AppState, GameRun, LastReport, LobbyExt, Rev, RunPhase};
 use crate::ui::{
     self, ActionQueue, PRIMARY, SECONDARY, UiAction, color, column, row, spawn_button, text,
 };
@@ -61,10 +61,35 @@ fn count_down(
 }
 
 fn outcome_words(report: &RoundReport) -> (&'static str, Color) {
-    match report.outcome {
-        Outcome::Won(Team::Player) => ("Victory", color::GOOD),
-        Outcome::Won(Team::Enemy) => ("Defeat", color::BAD),
-        _ => ("Draw", color::MUTED),
+    match report.result {
+        Some(true) => ("Victory", color::GOOD),
+        Some(false) => ("Defeat", color::BAD),
+        None => ("Draw", color::MUTED),
+    }
+}
+
+/// "1st", "2nd", "3rd", "4th"...
+pub fn ordinal(n: u32) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (1, 11) | (2, 12) | (3, 13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
+/// Why the player lost the HP they did (or didn't).
+fn damage_note(r: &RoundReport) -> String {
+    match (r.opponent, r.damage) {
+        (Opponent::Ghost(_), _) if r.result == Some(false) => {
+            "Losing to a ghost costs no health.".to_string()
+        }
+        (_, 0) => "No damage taken.".to_string(),
+        (Opponent::Monsters(w), d) if w.is_boss() => format!("Lost {d} HP: 2 + the round number."),
+        (Opponent::Monsters(_), d) => format!("Lost {d} HP to the monsters."),
+        (_, d) => format!("Lost {d} HP: 2 + levels of surviving enemies."),
     }
 }
 
@@ -72,13 +97,15 @@ fn rebuild_result(
     mut commands: Commands,
     rev: Res<Rev>,
     report: Option<Res<LastReport>>,
+    run: Option<Res<GameRun>>,
     roots: Query<Entity, With<ResultRoot>>,
 ) {
     if !rev.is_changed() {
         return;
     }
-    let Some(report) = report else { return };
+    let (Some(report), Some(run)) = (report, run) else { return };
     let r = &report.0;
+    let lobby: &Lobby = &run.0;
     for e in &roots {
         commands.entity(e).despawn();
     }
@@ -107,10 +134,13 @@ fn rebuild_result(
                     |c| {
                         c.spawn(text(format!("Round {}", r.round), 14.0, color::MUTED));
                         c.spawn(text(headline, 56.0, ink));
+                        let ticks = if r.ticks == 1 { "tick" } else { "ticks" };
                         c.spawn(text(
                             format!(
-                                "{} of your units survived - {} ticks",
-                                r.player_survivors, r.ticks
+                                "vs {} - {} of your units survived - {} {ticks}",
+                                cards::opponent_label(lobby, r.opponent),
+                                r.player_survivors,
+                                r.ticks
                             ),
                             16.0,
                             color::MUTED,
@@ -146,12 +176,7 @@ fn rebuild_result(
                             Node { width: percent(r.hp_after as f32), height: px(8), ..default() },
                             BackgroundColor(color::HP_FILL),
                         ));
-                        let note = if r.damage > 0 {
-                            format!("Lost {} HP: 2 + levels of surviving enemies.", r.damage)
-                        } else {
-                            "No damage taken.".to_string()
-                        };
-                        hp.spawn(text(note, 13.0, color::FAINT));
+                        hp.spawn(text(damage_note(r), 13.0, color::FAINT));
                     });
 
                     cols.spawn((
@@ -174,7 +199,10 @@ fn rebuild_result(
                         let lines = [
                             ("Banked".to_string(), r.banked.to_string()),
                             ("Base".to_string(), format!("+{}", r.income.base)),
-                            ("Win".to_string(), format!("+{}", r.income.win)),
+                            (
+                                if r.opponent.is_pve() { "Reward" } else { "Win" }.to_string(),
+                                format!("+{}", r.income.win),
+                            ),
                             (
                                 format!("Interest ({} banked)", r.banked),
                                 format!("+{}", r.income.interest),
@@ -209,16 +237,25 @@ fn rebuild_result(
 
                 card.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(20.0) })
                     .with_children(|f| {
-                        let next = match r.status {
-                            RunStatus::Planning => match r.level_ups.last() {
-                                Some(level) => format!(
-                                    "Next: round {} - you reached level {level}!",
-                                    r.round + 1
-                                ),
-                                None => format!("Next: round {}", r.round + 1),
-                            },
-                            RunStatus::Victory => "You survived every round!".to_string(),
-                            RunStatus::Defeat => "Your warband has fallen.".to_string(),
+                        let next = match r.placement {
+                            Some(1) => "You are the last one standing!".to_string(),
+                            Some(n) => {
+                                format!("Knocked out - you placed {} of {LOBBY_SIZE}.", ordinal(n))
+                            }
+                            None => {
+                                let kind = cards::round_label(round_kind(r.round + 1));
+                                let left = lobby.alive_count();
+                                match r.level_ups.last() {
+                                    Some(level) => format!(
+                                        "Next: round {} ({kind}) - you reached level {level}!",
+                                        r.round + 1
+                                    ),
+                                    None => format!(
+                                        "Next: round {} ({kind}) - {left} players left",
+                                        r.round + 1
+                                    ),
+                                }
+                            }
                         };
                         f.spawn(text(next, 14.0, color::MUTED));
                         f.spawn(ui::button(
@@ -242,12 +279,15 @@ fn rebuild_game_over(
         return;
     }
     let Some(run) = run else { return };
-    let run = &run.0;
+    let lobby = &run.0;
+    let run = lobby.me();
     for e in &roots {
         commands.entity(e).despawn();
     }
     let reports: Vec<&RoundReport> = run.history().iter().map(|(_, r)| r).collect();
-    let wins = reports.iter().filter(|r| r.outcome == Outcome::Won(Team::Player)).count();
+    let wins = reports.iter().filter(|r| r.result == Some(true)).count();
+    let last_round = reports.last().map_or(1, |r| r.round);
+    let placement = run.placement().unwrap_or(LOBBY_SIZE as u32);
     let best_streak = reports.iter().map(|r| r.streak).max().unwrap_or(0).max(0);
     let gold_earned: u32 = reports.iter().map(|r| r.income.total()).sum();
 
@@ -272,14 +312,16 @@ fn rebuild_game_over(
             })
             .with_children(|left| {
                 let (headline, ink) = match run.status() {
-                    RunStatus::Victory => ("Victory", color::GOOD),
-                    _ => ("Defeat", color::BAD),
+                    RunStatus::Victory => ("Victory".to_string(), color::GOOD),
+                    _ => (format!("{} of {LOBBY_SIZE}", ordinal(placement)), color::BAD),
                 };
                 left.spawn(column(8.0)).with_children(|c| {
                     c.spawn(text(headline, 64.0, ink));
                     let sub = match run.status() {
-                        RunStatus::Victory => format!("Survived all {} rounds", run.round()),
-                        _ => format!("Fell in round {} of 15", run.round()),
+                        RunStatus::Victory => {
+                            format!("Last one standing after {last_round} rounds")
+                        }
+                        _ => format!("Knocked out in round {last_round}"),
                     };
                     c.spawn(text(sub, 17.0, color::MUTED));
                 });
@@ -294,7 +336,7 @@ fn rebuild_game_over(
                         ("Rounds won", format!("{wins} / {}", reports.len())),
                         ("Best win streak", best_streak.to_string()),
                         ("Gold earned", format!("{gold_earned} g")),
-                        ("HP left", run.hp().to_string()),
+                        ("Placement", ordinal(placement)),
                     ];
                     for (label, value) in stats {
                         grid.spawn(ui::panel(Node {
@@ -369,13 +411,14 @@ fn rebuild_game_over(
                     .spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(0.0) })
                     .with_children(|h| {
                         h.spawn(text("Run summary", 16.0, color::TEXT));
-                        h.spawn(text(
-                            "Replays rebuild each battle from its seed",
-                            13.0,
-                            color::FAINT,
-                        ));
+                        let note = if reports.len() > MAX_ROWS {
+                            format!("Last {MAX_ROWS} of {} rounds", reports.len())
+                        } else {
+                            "Replays rebuild each battle from its seed".to_string()
+                        };
+                        h.spawn(text(note, 13.0, color::FAINT));
                     });
-                let header = ["Round", "Result", "HP change", "HP after"];
+                let header = ["Round", "Opponent", "Result", "HP change", "HP after"];
                 table
                     .spawn(Node { padding: UiRect::horizontal(px(10)), ..row(0.0) })
                     .with_children(|h| {
@@ -387,7 +430,9 @@ fn rebuild_game_over(
                             ));
                         }
                     });
-                for (i, r) in reports.iter().enumerate() {
+                // Long runs don't fit: show the most recent rounds.
+                let shown = reports.len().saturating_sub(MAX_ROWS);
+                for (i, r) in reports.iter().enumerate().skip(shown) {
                     table
                         .spawn((
                             Node {
@@ -406,6 +451,7 @@ fn rebuild_game_over(
                             };
                             let cells = [
                                 (r.round.to_string(), color::TEXT),
+                                (cards::opponent_label(lobby, r.opponent), color::MUTED),
                                 (word.to_string(), ink),
                                 (delta, color::MUTED),
                                 (r.hp_after.to_string(), color::TEXT),
@@ -429,4 +475,6 @@ fn rebuild_game_over(
 }
 
 /// Column widths for the run summary table.
-const COLS: [f32; 4] = [80.0, 100.0, 140.0, 120.0];
+const COLS: [f32; 5] = [64.0, 170.0, 90.0, 100.0, 80.0];
+/// Rounds listed in the run summary.
+const MAX_ROWS: usize = 16;

@@ -1,6 +1,6 @@
 //! Scene states and the resources shared between screens.
 
-use battler_sim::run::{OwnedId, RoundReport, Run};
+use battler_sim::run::{Applied, Command, Lobby, OwnedId, Player, PlayerId, RoundReport, RunError};
 use battler_sim::{Action, Condition};
 use bevy::prelude::*;
 
@@ -25,9 +25,35 @@ pub enum RunPhase {
     Result,
 }
 
-/// The run in progress (kept through game over for the summary).
+/// The lobby in progress (kept through game over for the summary). The human
+/// is always player 0; the other seven are bots.
 #[derive(Resource)]
-pub struct GameRun(pub Run);
+pub struct GameRun(pub Lobby);
+
+/// The human player's id in the lobby.
+pub const ME: PlayerId = PlayerId(0);
+
+/// Shortcuts for the human player.
+///
+/// This is an *extension trait*: Rust lets a crate add methods to a type from
+/// another crate (here `Lobby` from `battler-sim`) by implementing its own trait
+/// for it. The methods are only visible where the trait is imported.
+pub trait LobbyExt {
+    /// The human player.
+    fn me(&self) -> &Player;
+    /// Sends a command as the human player.
+    fn act(&mut self, command: Command) -> Result<Applied, RunError>;
+}
+
+impl LobbyExt for Lobby {
+    fn me(&self) -> &Player {
+        self.player(ME)
+    }
+
+    fn act(&mut self, command: Command) -> Result<Applied, RunError> {
+        self.apply(ME, command)
+    }
+}
 
 /// The most recent round's result.
 #[derive(Resource)]

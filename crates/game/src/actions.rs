@@ -1,11 +1,11 @@
 //! Applies queued [`UiAction`]s: the one place where UI input changes the run.
 
-use battler_sim::run::{Location, Run, RunStatus};
+use battler_sim::run::{Applied, Command, Lobby, Location, Player};
 use bevy::prelude::*;
 
 use crate::battle::Playback;
 use crate::editor;
-use crate::state::{AppState, GameRun, MenuUi, Planning, Rev, RunPhase, Settings};
+use crate::state::{AppState, GameRun, LobbyExt, MenuUi, Planning, Rev, RunPhase, Settings};
 use crate::ui::{ActionQueue, DragSource, DropTarget, UiAction};
 
 #[allow(clippy::too_many_arguments)]
@@ -39,7 +39,7 @@ pub fn apply_actions(
             UiAction::NewRun => {
                 // Any varying number makes a fresh seed; real elapsed time works on the web too.
                 let seed = time.elapsed().as_nanos() as u64 ^ 0x5EED_BA77_1E50_0001;
-                commands.insert_resource(GameRun(Run::new(seed)));
+                commands.insert_resource(GameRun(Lobby::new(seed, 1)));
                 *planning = Planning::default();
                 next_app.set(AppState::InRun);
                 if let Some(next) = next_phase.as_mut() {
@@ -58,14 +58,15 @@ pub fn apply_actions(
             UiAction::BackToSummary => next_app.set(AppState::GameOver),
             UiAction::Replay(i) => {
                 let Some(run) = run.as_ref() else { continue };
-                if let Some((setup, _)) = run.0.history().get(i) {
-                    commands.insert_resource(Playback::new(setup.clone(), true));
+                if let Some((setup, report)) = run.0.me().history().get(i) {
+                    let opponent = Some(report.opponent);
+                    commands.insert_resource(Playback::new(setup.clone(), true, opponent));
                     next_app.set(AppState::Replay);
                 }
             }
             UiAction::Continue => {
                 let Some(run) = run.as_ref() else { continue };
-                if run.0.status() == RunStatus::Planning {
+                if run.0.me().is_alive() && !run.0.is_over() {
                     if let Some(next) = next_phase.as_mut() {
                         next.set(RunPhase::Planning);
                     }
@@ -100,95 +101,98 @@ fn report<T>(planning: &mut Planning, result: Result<T, impl std::fmt::Display>)
     }
 }
 
-fn selected_loc(run: &Run, planning: &Planning) -> Option<Location> {
-    planning.selected.and_then(|id| run.locate(id))
+fn selected_loc(me: &Player, planning: &Planning) -> Option<Location> {
+    planning.selected.and_then(|id| me.locate(id))
 }
 
-fn move_selected_to(run: &mut Run, planning: &mut Planning, to: Location) {
-    if let Some(from) = selected_loc(run, planning) {
-        report(planning, run.move_unit(from, to));
+fn move_selected_to(lobby: &mut Lobby, planning: &mut Planning, to: Location) {
+    if let Some(from) = selected_loc(lobby.me(), planning) {
+        report(planning, lobby.act(Command::Move { from, to }));
     }
 }
 
 fn planning_action(
     commands: &mut Commands,
-    run: &mut Run,
+    lobby: &mut Lobby,
     planning: &mut Planning,
     next_phase: Option<&mut NextState<RunPhase>>,
     action: UiAction,
 ) {
     match action {
         UiAction::Buy(i) => {
-            if let Some(id) = report(planning, run.buy(i))
+            if let Some(Applied::Bought(id)) = report(planning, lobby.act(Command::Buy(i)))
                 && planning.selected.is_none()
             {
                 planning.selected = Some(id);
-                editor::load_draft(run, planning);
+                editor::load_draft(lobby.me(), planning);
             }
         }
         UiAction::BuyXp => {
-            if let Some(levels) = report(planning, run.buy_xp()) {
+            if let Some(Applied::BoughtXp(levels)) = report(planning, lobby.act(Command::BuyXp)) {
                 planning.level_up(&levels);
             }
         }
         UiAction::DismissNotice => planning.notice = None,
         UiAction::Reroll => {
-            report(planning, run.reroll());
+            report(planning, lobby.act(Command::Reroll));
         }
         UiAction::Ready => {
-            if let Some(setup) = report(planning, run.start_battle()) {
-                commands.insert_resource(Playback::new(setup, false));
+            if report(planning, lobby.start_round()).is_some()
+                && let Some((setup, _, opponent)) = lobby.battle_for(crate::state::ME)
+            {
+                commands.insert_resource(Playback::new(setup.clone(), false, Some(opponent)));
                 if let Some(next) = next_phase {
                     next.set(RunPhase::Battle);
                 }
             }
         }
         UiAction::SelectUnit(loc) => {
-            let picked = run.unit_at(loc).map(|u| u.id);
+            let picked = lobby.me().unit_at(loc).map(|u| u.id);
             if planning.selected != picked {
                 planning.selected = picked;
-                editor::load_draft(run, planning);
+                editor::load_draft(lobby.me(), planning);
             }
         }
-        UiAction::ClickCell(p) => move_selected_to(run, planning, Location::Board(p)),
-        UiAction::ClickBench(i) => move_selected_to(run, planning, Location::Bench(i)),
+        UiAction::ClickCell(p) => move_selected_to(lobby, planning, Location::Board(p)),
+        UiAction::ClickBench(i) => move_selected_to(lobby, planning, Location::Bench(i)),
         UiAction::Sell => {
-            if let Some(loc) = selected_loc(run, planning) {
-                sell(run, planning, loc);
+            if let Some(loc) = selected_loc(lobby.me(), planning) {
+                sell(lobby, planning, loc);
             }
         }
-        UiAction::SellAt(loc) => sell(run, planning, loc),
-        UiAction::PaletteBlock(block) => editor::click_block(run, planning, block),
-        UiAction::CycleSlot(card, slot) => editor::cycle_slot(run, planning, card, slot),
-        UiAction::ClearCard(card) => editor::clear_card(run, planning, card),
-        UiAction::CardUp(card) => editor::card_up(run, planning, card),
+        UiAction::SellAt(loc) => sell(lobby, planning, loc),
+        UiAction::PaletteBlock(block) => editor::click_block(lobby, planning, block),
+        UiAction::CycleSlot(card, slot) => editor::cycle_slot(lobby, planning, card, slot),
+        UiAction::ClearCard(card) => editor::clear_card(lobby, planning, card),
+        UiAction::CardUp(card) => editor::card_up(lobby, planning, card),
         UiAction::Drop(source, target) => match (source, target) {
             (DragSource::Unit(from), DropTarget::Cell(p)) => {
-                if report(planning, run.move_unit(from, Location::Board(p))).is_some() {
-                    planning.selected = run.unit_at(Location::Board(p)).map(|u| u.id);
+                let to = Location::Board(p);
+                if report(planning, lobby.act(Command::Move { from, to })).is_some() {
+                    planning.selected = lobby.me().unit_at(to).map(|u| u.id);
                 }
             }
             (DragSource::Unit(from), DropTarget::Bench(i)) => {
-                report(planning, run.move_unit(from, Location::Bench(i)));
+                report(planning, lobby.act(Command::Move { from, to: Location::Bench(i) }));
             }
-            (DragSource::Unit(from), DropTarget::Sell) => sell(run, planning, from),
+            (DragSource::Unit(from), DropTarget::Sell) => sell(lobby, planning, from),
             (DragSource::Block(block), DropTarget::Card(card, slot)) => {
-                editor::drop_block(run, planning, card, slot, block)
+                editor::drop_block(lobby, planning, card, slot, block)
             }
             (DragSource::Block(_), _) | (DragSource::Unit(_), DropTarget::Card(..)) => {}
         },
         _ => {}
     }
     // Keep the selection pointed at a unit that still exists (merges remove copies).
-    if planning.selected.is_some() && selected_loc(run, planning).is_none() {
+    if planning.selected.is_some() && selected_loc(lobby.me(), planning).is_none() {
         planning.selected = None;
         planning.draft.clear();
     }
 }
 
-fn sell(run: &mut Run, planning: &mut Planning, loc: Location) {
-    let sold = run.unit_at(loc).map(|u| u.id);
-    if report(planning, run.sell(loc)).is_some() && planning.selected == sold {
+fn sell(lobby: &mut Lobby, planning: &mut Planning, loc: Location) {
+    let sold = lobby.me().unit_at(loc).map(|u| u.id);
+    if report(planning, lobby.act(Command::Sell(loc))).is_some() && planning.selected == sold {
         planning.selected = None;
         planning.draft.clear();
     }
