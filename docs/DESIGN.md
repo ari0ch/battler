@@ -381,9 +381,21 @@ Goal: prove the program → watch → analyse loop is fun, then add the shop.
 
 In rough order. Each item is discussed before it is built.
 
-1. **PvE rounds (under discussion):** easy monster rounds at the start of a run, before
-   the AI opponents arrive, plus "boss" rounds on set rounds. Gives new players a gentle
-   start and a natural place to drop rewards.
+1. **PvE rounds (agreed, Oct 2026):** easy monster rounds at the start of a run plus
+   "boss" rounds on set rounds. Gives new players a gentle start and a natural place to
+   drop rewards.
+   - **Separate monster roster**, not weakened characters: monsters have fixed stats and
+     fixed programs, and never appear in the shop, pool, synergies or merges.
+   - **Monster rounds 1-3**, each teaching one idea (slimes: just fight; wolves: they gang
+     up, so heal/taunt; goblins: archers behind a brute, so target the back line).
+     **Bosses on rounds 7, 11 and 15**; bosses use HP-phase programs.
+   - **Rewards:** a little gold for winning, until items exist.
+   - **Losses:** monster rounds cost a flat small amount; boss losses cost more, scaling
+     with the round.
+   - **AI opponents are players, not generated boards.** Bots must own a full player
+     state (gold, shop, bench, board, XP) and change it only through the same actions as
+     the human, so that multiplayer can later track ~8 boards per lobby and let anyone
+     view any board. Bots also play the monster rounds. (Lobby design under discussion.)
 2. **Playtest clean-up pass (Oct 2026 browser playtest):** header stats and the Buy XP /
    Reroll buttons wrap; long names overflow shop cards; the level-up notice covers the
    top of the board; the palette jumps down when a card row is added, causing misclicks;
