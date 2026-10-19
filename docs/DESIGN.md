@@ -439,9 +439,12 @@ In rough order. Each item is discussed before it is built.
 2. **Playtest clean-up pass (Oct 2026 browser playtest):** header stats and the Buy XP /
    Reroll buttons wrap; long names overflow shop cards; the level-up notice covers the
    top of the board; the palette jumps down when a card row is added, causing misclicks;
-   a possible double swap when dragging a bench unit onto an occupied cell; "1 ticks" on
-   the result screen; show only near-term locked blocks in the palette; a "what fired"
-   per-unit summary on the result screen.
+   "1 ticks" on the result screen; a "what fired" per-unit summary on the result screen.
+   **Done (Oct 2026):** dragging a unit onto an occupied cell swaps them (drops were being
+   applied twice, undoing the swap); a block dropped on either half of a card replaces
+   the matching half; **the palette shows only blocks the unit can use right now**
+   (decided: locked blocks are hidden entirely, not greyed; level-up notices announce
+   new ones).
 3. **Items:** equipment dropped by PvE and boss rounds, to collect before the game
    proper starts (TFT-style). Not designed yet. Questions to settle: what items do (stats,
    new blocks, modified abilities?), how they combine, and how they are equipped in the
