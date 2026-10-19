@@ -76,8 +76,16 @@ The skill lies in planning, and in reading why a plan went wrong.
   (TFT-like model chosen as a first pass; revisit after playtesting.)
 - **The run ends** at 0 HP (defeat) or after winning through round 15 (victory).
 - **Player level** (TFT-style) replaces round-based board size. Level sets how many units
-  may be on the board, the shop's rarity odds, and which blocks are unlocked. XP comes
-  automatically each round and can be bought with gold. Numbers: see Open questions.
+  may be on the board, the shop's rarity odds, and which blocks are unlocked.
+  Starting numbers (to be checked by simulation later):
+  - **Board size = player level.** Start at level 3; maximum level 8.
+  - **XP:** +2 automatically per round; **buy 4 XP for 4 gold**.
+    XP to reach the next level: 6, 10, 20, 36, 56 (levels 4 to 8).
+  - **Shop odds** (Common / Rare / Epic):
+
+    | Level | 3 | 4 | 5 | 6 | 7 | 8 |
+    |---|---|---|---|---|---|---|
+    | Odds % | 80/20/0 | 65/30/5 | 45/40/15 | 30/45/25 | 20/40/40 | 15/35/50 |
 - **Battlefield:** 8×5 grid. The player places units in the left four columns; the
   enemy board occupies the right four.
 
@@ -87,10 +95,18 @@ Main menu → **run loop** (Planning → Battle → Result, repeated each round)
 Run summary → Main menu.
 
 - **Main menu:** new run, how to play, settings.
-- **Planning (timed): one screen, no modes.** Board, bench, shop, synergy tracker and the
-  selected unit's program are all visible for the whole phase. Clicking a unit makes its
-  cards editable in place (no separate editor drawer; the drawer meant too many clicks and
-  hid the shop). Hovering a signature block highlights its reach on the board.
+- **Planning (timed): one screen, no modes.** Left to right: synergy tracker, board and
+  bench (as large as possible), and a narrow program column; the shop is the footer.
+  The program column shows the selected unit's cards as single-line rows
+  (`if [condition] -> [action]`) with the block palette **underneath**, not beside them.
+  Clicking a unit makes its cards editable in place (no separate editor drawer; the
+  drawer meant too many clicks and hid the shop). Hovering a signature block highlights
+  its reach on the board.
+- **Synergies are always visible.** Planning: a tracker on the left listing each class on
+  the board with its count and thresholds; active synergies are highlighted, near-active
+  ones show what one more unit would unlock, bench-only classes are faded. Shop offers
+  say when buying would activate a synergy. Battle: a strip shows both sides' active
+  synergies.
   60 seconds, or 75 once the player has 5+ units. A **Ready** button ends it early.
   The enemy board stays hidden until the battle starts.
 - **Unit stats are a glance, not a panel:** one line in the program header, with full
@@ -182,6 +198,41 @@ In priority order:
    player level introduces each. Under discussion.
 7. **Player level numbers:** XP per round, XP cost, level thresholds, board size and shop
    odds per level. Under discussion.
+
+## Roster (agreed draft, 18 characters)
+
+Rarity rules: **Common** = one simple signature, no passive (teaches the class).
+**Rare** = a stronger or more situational signature plus a passive. **Epic** = two
+signatures, a passive, and slightly higher stats. Costs 1 / 2 / 3 gold; pool copies 12 / 10 / 8.
+
+| Class | Common | Rare | Epic |
+|---|---|---|---|
+| Knight | **Bram Gatewarden**: Taunt | **Sir Aldric**: Shield Wall. *Bulwark*: -10% damage taken per adjacent ally | **Ysolde the Unbroken**: Taunt, Second Wind (heal self 30%). *Last Stand*: half damage below 25% HP |
+| Ranger | **Pip Quickfeather**: Aimed Shot | **Kestrel**: Kite. *Hunter's Mark*: allies deal +15% to enemies she has hit | **Elowen Starshot**: Aimed Shot, Volley (half damage to every enemy in range). *Eagle Eye*: +1 range |
+| Mage | **Tobble the Apprentice**: Firebolt (heavy single-target hit) | **Mirelle Frostweaver**: Frost Nova (adjacent enemies lose their next turn). *Chill*: frozen enemies take +20% | **Archmage Vorn**: Fireball, Blink. *Arcane Surge*: every third spell crits |
+| Cleric | **Sister Agnes**: Heal | **Brother Calloway**: Sanctuary. *Blessing*: his heals also grant Guard | **Seraphine Dawnbringer**: Heal, Mass Heal (all allies). *Resurrection*: first ally to fall returns at 30% HP |
+| Rogue | **Nettle**: Backstab | **Vex**: Shadowstep. *Opportunist*: +30% damage to enemies below half HP | **The Grey Widow**: Shadowstep, Assassinate (finish an enemy below 25% within 3 cells). *Vanish*: untargetable for the first 2 ticks |
+| Berserker | **Grub Ironjaw**: Cleave | **Hilda Bloodaxe**: Frenzy. *Bloodlust*: heals 20% of damage dealt while below half HP | **Korgath the Undying**: Cleave, Rampage (Frenzy and Cleave at once). *Undying*: survives the first killing blow on 1 HP |
+
+New sim mechanics this needs: freeze (skip a turn), mark, execute, untargetable,
+resurrection, cheat-death, plus new abilities Firebolt, Frost Nova, Second Wind, Volley,
+Mass Heal, Assassinate and Rampage. Numbers are first guesses for the balance harness.
+
+## Block reassessment (proposed, not yet agreed)
+
+- **Cut:** ability ready (fall-through already covers cooldowns), always (an empty
+  condition means always), Advance (the locked rule advances), Hold, every N ticks.
+- **Add:** *enemy weak* (an enemy in range below 30% HP), *I was hit* (took damage last tick).
+- **Unlock order by player level:**
+
+  | Level | Conditions | Actions | Targets |
+  |---|---|---|---|
+  | 3 (start) | enemy adjacent, my HP < X%, ally HP < X% | Attack, Guard | nearest, weakest |
+  | 4 | enemy in range | Protect Ally | strongest |
+  | 5 | outnumbered | Retreat | ranged |
+  | 6 | enemy weak, I was hit | | |
+
+  Signature blocks always come with their character. Signals become a synergy unlock.
 
 ## Rules (implemented in `battler-sim`)
 
