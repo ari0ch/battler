@@ -222,6 +222,25 @@ In priority order:
 5. **Status icons:** shield, frenzy, immunity; taunt draws a line to the Knight.
 6. **Signals** pulse between allies.
 
+**Animation (Oct 2026, `effects.rs` and `battle.rs`).** All presentation, so free to use
+floats; nothing here feeds back into the sim.
+
+- **Units:** a 2-pixel breathing bob out of step between units; a hop on walking steps;
+  they lean into melee lunges; flash red when hit (timed to land with projectiles); hop
+  when casting an ability; tint blue while frozen and warm while frenzied; on death they
+  topple sideways and fade over 0.7 s with a puff of dust instead of vanishing.
+- **Spell effects** are plain UI nodes (rings, bursts, bubbles, particles) that grow,
+  drift and fade in playback time, so they speed up with 2x/4x. Each ability has a look:
+  Frost Nova an ice ring and spray, Fireball an explosion where the bolt lands, Firebolt
+  a smaller one, Cleave and Rampage orange rings (Rampage kicks up dust), Mass Heal a
+  wide green ring, Sanctuary double gold rings, Taunt red rings, Shield Wall a blue ring,
+  Frenzy a red pulse, Backstab and Assassinate a blood burst, Blink and Shadowstep purple
+  puffs at both ends (the body jumps rather than glides). Heals sparkle, Shielded and
+  Immune show a bubble that follows the unit, Frozen an ice burst, signals a wide gold
+  ring, crits a yellow spray. Ordinary hits get a small white spark.
+- **Not yet:** per-character animation frames (the sprites are single frames), screen
+  shake, sound.
+
 ### Analysis
 
 - **Post-game replay** of any battle from the run, for analysis rather than mid-run
@@ -304,7 +323,23 @@ In priority order:
 1. **More randomness?** Crits are implemented (see below). Dodges or damage ranges could
    follow if fights feel too predictable.
 2. **Bot difficulty:** one bot strategy for now; difficulty levels may follow.
-3. **Art direction and sourcing** for pixel art.
+3. **Battle perspective.** The profile-view sprites suit the shop and bench but read
+   poorly on the top-down battlefield. Options studied (canvas artboard "Perspective",
+   scripts in `tools/art/`):
+   1. *Tilted field with 3/4 front and back sprites:* squash the field vertically (about
+      0.6) and draw each character twice, facing up (back) and down (front). Keeps the
+      grid and all sim maths; costs a second sprite per unit (36 + 8 more).
+   2. *Full isometric:* diamond tiles and four facings. Looks the richest, but changes
+      board drawing, picking, depth sorting and needs about 4x the art.
+   3. *True top-down sprites:* matches the field, but heads and shoulders lose most of
+      the character the current sprites have.
+   4. *Animated side view:* keep profile sprites and add walk/attack frames, but it
+      reads best with teams facing left and right, so the board would turn sideways.
+   5. *Standees:* keep today's sprites, stand them on a tilted field with a base and a
+      strong shadow, like board-game minis. Cheapest, fits the art we have.
+
+   Recommendation: standees now (a few days, no new art), then option 1 as the upgrade
+   once the roster settles. Undecided.
 4. **Simulation pass** on player level numbers, shop odds and block unlocks once built.
 
 ## Roster (agreed draft, 18 characters)

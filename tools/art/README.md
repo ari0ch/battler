@@ -12,3 +12,11 @@ and Pillow. Output goes to `out/` next to the scripts; copy finished PNGs into
   bars, icons, ground). `sheet.py` renders a review sheet with 9-slice previews.
 
 Everything is drawn at 1x and shown at whole-number scales (2x on the board).
+
+## Perspective study
+
+`shapes.py` (filled shapes on a small canvas with an automatic 1px outline),
+`perspective.py` (example 3/4 front/back and top-down sprites, an isometric tile) and
+`scenes.py` (a battle scene per option plus walk and attack GIFs) made the perspective
+comparison in `docs/DESIGN.md`. Run `python3 perspective.py && python3 scenes.py`
+after `kit.py` (scenes reuse `out/ui/field_grass.png`); output goes to `out/persp/`.

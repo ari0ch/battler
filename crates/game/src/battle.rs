@@ -7,10 +7,11 @@ use std::collections::HashMap;
 
 use battler_sim::run::economy::{BOARD_DEPTH, BOARD_LANES};
 use battler_sim::run::{BattleSetup, Opponent};
-use battler_sim::{Battle, CardRef, Class, Event, Outcome, Pos, StatusKind, Team, UnitId};
+use battler_sim::{Ability, Battle, CardRef, Class, Event, Outcome, Pos, StatusKind, Team, UnitId};
 use bevy::prelude::*;
 
 use crate::cards;
+use crate::effects::{self, Effect};
 use crate::kit;
 use crate::motion::{self, Body};
 use crate::planning::spawn_pips;
@@ -37,6 +38,7 @@ impl Plugin for BattlePlugin {
                     move_bodies,
                     animate_units,
                     animate_projectiles,
+                    animate_effects,
                     animate_floaters,
                     refresh_trace,
                 )
@@ -78,6 +80,13 @@ pub struct Playback {
     fired: HashMap<UnitId, CardRef>,
     /// Badge text per unit and how long it stays up.
     badges: HashMap<UnitId, (String, f32)>,
+    /// The signature ability each unit's fired card uses this tick, so its
+    /// hits can look like that spell (a Fireball explodes, a Backstab bleeds).
+    casting: HashMap<UnitId, Ability>,
+    /// Per-unit animation timers: hit flashes, cast hops, deaths.
+    anims: HashMap<UnitId, UnitAnim>,
+    /// Playback seconds since the battle began; drives idle breathing.
+    clock: f32,
     ended_for: f32,
     done: bool,
     pub skip: bool,
@@ -99,6 +108,9 @@ impl Playback {
             bodies,
             fired: HashMap::new(),
             badges: HashMap::new(),
+            casting: HashMap::new(),
+            anims: HashMap::new(),
+            clock: 0.0,
             ended_for: 0.0,
             done: false,
             skip: false,
@@ -106,6 +118,21 @@ impl Playback {
         }
     }
 }
+
+/// Short-lived animation states of one unit, in playback seconds.
+#[derive(Debug, Default, Clone, Copy)]
+struct UnitAnim {
+    /// Time left on the red flash after being hit.
+    flash: f32,
+    /// Time left on the hop after casting an ability.
+    cast: f32,
+    /// Time since the unit died: it topples and fades rather than vanishing.
+    dead_for: Option<f32>,
+}
+
+const FLASH_SECS: f32 = 0.22;
+const CAST_SECS: f32 = 0.35;
+const DEATH_SECS: f32 = 0.7;
 
 #[derive(Component)]
 struct BattleRoot;
@@ -471,6 +498,7 @@ fn advance(
             let pb = &mut *pb;
             let events = pb.battle.step();
             pb.fired.clear();
+            pb.casting.clear();
             if let Ok(board) = board.single() {
                 for event in &events {
                     show_event(&mut commands, board, pb, event);
@@ -510,79 +538,262 @@ fn advance(
     }
 }
 
-/// Turns one sim event into a badge or floating number.
+// Spell colours.
+const ICE: Color = Color::srgb(0.62, 0.88, 1.0);
+const FIRE: Color = Color::srgb(0.98, 0.55, 0.18);
+const HOLY: Color = Color::srgb(1.0, 0.86, 0.40);
+const HEAL: Color = Color::srgb(0.45, 0.92, 0.45);
+const BLOOD: Color = Color::srgb(0.90, 0.22, 0.22);
+const ARCANE: Color = Color::srgb(0.70, 0.45, 0.98);
+const SHIELD: Color = Color::srgb(0.45, 0.70, 1.0);
+const DUST: Color = Color::srgb(0.72, 0.65, 0.55);
+
+/// Where effects aimed "at" a unit should land: the middle of its sprite,
+/// which for big bosses is well above its feet.
+fn chest(pb: &Playback, id: UnitId) -> Option<Vec2> {
+    let body = pb.bodies.get(&id)?;
+    let size = pb.battle.unit(id).map_or(SPRITE_PX * 2.0, |u| SPRITE_PX * battle_scale(u.kind));
+    Some(body.pos + Vec2::new(0.0, CELL / 2.0 - 4.0 - size / 2.0))
+}
+
+/// Where a unit stands, for effects on the ground around it (novas, auras).
+fn feet(pb: &Playback, id: UnitId) -> Option<Vec2> {
+    pb.bodies.get(&id).map(|b| b.pos + Vec2::new(0.0, CELL / 2.0 - 8.0))
+}
+
+/// Turns one sim event into animation: badges, floating numbers, lunges and
+/// projectiles, and spell effects (see `effects.rs`).
 fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: &Event) {
-    // Floaters appear where the unit is drawn, not at its cell.
-    let pos_of = |id: UnitId, pb: &Playback| pb.bodies.get(&id).map(|b| b.pos);
     match *event {
         Event::CardFired { unit, card } => {
             pb.fired.insert(unit, card);
-            let label = match card {
+            let action = match card {
                 CardRef::Node(n) => pb
                     .battle
                     .unit(unit)
-                    .and_then(|u| {
-                        u.program.nodes().get(n).map(|node| cards::action_name(node.action))
-                    })
-                    .unwrap_or_default(),
-                CardRef::Default => "Attack".to_string(),
+                    .and_then(|u| u.program.nodes().get(n).map(|node| node.action)),
+                CardRef::Default => None,
             };
+            let label = action.map_or_else(|| "Attack".to_string(), cards::action_name);
             pb.badges.insert(unit, (label, TICK_SECONDS * 1.6));
+            if let Some(ability) = action.and_then(|a| a.ability()) {
+                pb.casting.insert(unit, ability);
+            }
         }
         Event::Attacked { attacker, target, damage, crit } => {
-            // Melee attackers lunge at their target; ranged ones loose a
-            // projectile. Either way the target is knocked back a little.
-            let ranged = pb.battle.unit(attacker).is_some_and(|u| u.is_ranged());
-            match (ranged, pos_of(attacker, pb)) {
-                (true, Some(from)) => {
-                    let mage = pb.battle.unit(attacker).is_some_and(|u| u.class == Class::Mage);
-                    spawn_projectile(commands, board, from, target, mage);
-                }
-                _ => motion::lunge(&mut pb.bodies, attacker, target),
-            }
-            motion::knock(&mut pb.bodies, target, attacker, if crit { 160.0 } else { 90.0 });
-            if let Some(p) = pos_of(target, pb) {
-                let (label, c, size) = if damage == 0 {
-                    ("Blocked".to_string(), color::BLUE_TEXT, 14.0)
-                } else if crit {
-                    (format!("{damage}!"), color::CRIT, 22.0)
-                } else {
-                    (format!("-{damage}"), color::BAD, 16.0)
-                };
-                spawn_floater(commands, board, p, label, c, size);
-            }
+            show_hit(commands, board, pb, attacker, target, damage, crit);
         }
         Event::Healed { target, amount, .. } => {
-            if let Some(p) = pos_of(target, pb) {
+            if let Some(p) = chest(pb, target) {
                 spawn_floater(commands, board, p, format!("+{amount}"), color::GOOD, 16.0);
             }
+            effects::sparkles(commands, board, target, HEAL);
         }
-        Event::StatusApplied { unit, status: StatusKind::Taunted { .. }, .. } => {
-            if let Some(p) = pos_of(unit, pb) {
-                spawn_floater(commands, board, p, "Taunted".into(), color::BAD, 12.0);
+        Event::Guarded { unit } => {
+            if let Some(p) = chest(pb, unit) {
+                effects::ring(p, 30.0, 36.0).color(SHIELD).life(0.4).spawn(commands, board);
             }
         }
+        Event::StatusApplied { unit, status, .. } => show_status(commands, board, pb, unit, status),
         Event::SignalSent { unit, .. } => {
-            if let Some(p) = pos_of(unit, pb) {
+            if let Some(p) = chest(pb, unit) {
                 spawn_floater(commands, board, p, "Signal".into(), color::GOLD_LIGHT, 12.0);
+                effects::ring(p, 8.0, CELL * 2.2)
+                    .color(color::GOLD_LIGHT)
+                    .life(0.6)
+                    .spawn(commands, board);
             }
+        }
+        Event::AbilityUsed { unit, ability } => show_cast(commands, board, pb, unit, ability),
+        Event::Teleported { unit, from, to } => {
+            // A puff where it vanished and another where it appears.
+            effects::spray(commands, board, field_centre(from), 10, 90.0, ARCANE);
+            effects::burst(field_centre(from), 26.0).color(ARCANE).life(0.3).spawn(commands, board);
+            motion::teleport(&mut pb.bodies, unit, field_centre(to));
+            effects::burst(field_centre(to), 30.0).color(ARCANE).life(0.35).spawn(commands, board);
+            effects::spray(commands, board, field_centre(to), 10, 70.0, ARCANE);
         }
         Event::TurnSkipped { unit } => {
-            if let Some(p) = pos_of(unit, pb) {
+            if let Some(p) = chest(pb, unit) {
                 spawn_floater(commands, board, p, "Frozen".into(), color::BLUE_TEXT, 13.0);
             }
         }
-        Event::Revived { unit, .. } => {
-            if let Some(p) = pos_of(unit, pb) {
-                spawn_floater(commands, board, p, "Revived!".into(), color::GOLD_LIGHT, 15.0);
+        Event::Died { unit } => {
+            pb.anims.entry(unit).or_default().dead_for = Some(0.0);
+            if let Some(p) = feet(pb, unit) {
+                effects::spray(commands, board, p, 12, 60.0, DUST);
             }
+        }
+        Event::Revived { unit, .. } => {
+            pb.anims.insert(unit, UnitAnim { cast: CAST_SECS, ..default() });
+            if let Some(p) = chest(pb, unit) {
+                spawn_floater(commands, board, p, "Revived!".into(), color::GOLD_LIGHT, 15.0);
+                effects::burst(p, 44.0).color(HOLY).life(0.5).spawn(commands, board);
+            }
+            effects::sparkles(commands, board, unit, HOLY);
         }
         Event::CheatedDeath { unit } => {
-            if let Some(p) = pos_of(unit, pb) {
+            if let Some(p) = chest(pb, unit) {
                 spawn_floater(commands, board, p, "Undying!".into(), color::GOLD_LIGHT, 15.0);
+                effects::ring(p, 50.0, 20.0).color(HOLY).life(0.5).spawn(commands, board);
             }
         }
+        Event::Moved { .. } => {}
+    }
+}
+
+/// An attack landing: a melee lunge or a projectile, a knock-back, a flash on
+/// the target and a burst styled by the spell that caused it.
+fn show_hit(
+    commands: &mut Commands,
+    board: Entity,
+    pb: &mut Playback,
+    attacker: UnitId,
+    target: UnitId,
+    damage: u32,
+    crit: bool,
+) {
+    let ranged = pb.battle.unit(attacker).is_some_and(|u| u.is_ranged());
+    let spell = pb.casting.get(&attacker).copied();
+    // Ranged hits land when the projectile does.
+    let mut delay = 0.0;
+    match (ranged, chest(pb, attacker)) {
+        (true, Some(from)) => {
+            let mage = pb.battle.unit(attacker).is_some_and(|u| u.class == Class::Mage);
+            spawn_projectile(commands, board, from, target, mage);
+            delay = PROJECTILE_SECS;
+        }
+        _ => motion::lunge(&mut pb.bodies, attacker, target),
+    }
+    motion::knock(&mut pb.bodies, target, attacker, if crit { 160.0 } else { 90.0 });
+    if damage > 0 {
+        pb.anims.entry(target).or_default().flash = FLASH_SECS + delay;
+    }
+    let Some(p) = chest(pb, target) else { return };
+    let (label, c, size) = if damage == 0 {
+        ("Blocked".to_string(), color::BLUE_TEXT, 14.0)
+    } else if crit {
+        (format!("{damage}!"), color::CRIT, 22.0)
+    } else {
+        (format!("-{damage}"), color::BAD, 16.0)
+    };
+    spawn_floater(commands, board, p, label, c, size);
+
+    // Spell-specific impacts; anything else gets a small white spark.
+    match spell {
+        Some(Ability::Fireball) => {
+            effects::burst(p, 46.0).color(FIRE).life(0.45).delay(delay).spawn(commands, board);
+            effects::ring(p, 10.0, 60.0).color(FIRE).life(0.4).delay(delay).spawn(commands, board);
+        }
+        Some(Ability::Firebolt) => {
+            effects::burst(p, 24.0).color(FIRE).life(0.3).delay(delay).spawn(commands, board);
+        }
+        Some(Ability::FrostNova) => {
+            effects::burst(p, 20.0).color(ICE).life(0.35).spawn(commands, board);
+        }
+        Some(Ability::Backstab | Ability::Assassinate) => {
+            effects::burst(p, 30.0).color(BLOOD).life(0.35).spawn(commands, board);
+            effects::spray(commands, board, p, 8, 80.0, BLOOD);
+        }
+        Some(Ability::AimedShot) => {
+            effects::ring(p, 6.0, 30.0).color(HOLY).life(0.3).delay(delay).spawn(commands, board);
+        }
+        _ if damage > 0 => {
+            effects::burst(p, 14.0)
+                .color(Color::WHITE)
+                .life(0.18)
+                .delay(delay)
+                .spawn(commands, board);
+        }
         _ => {}
+    }
+    if crit {
+        effects::spray(commands, board, p, 8, 120.0, color::CRIT);
+    }
+}
+
+/// The caster's side of an ability: a hop, and for area spells a ring or
+/// nova on the ground around it.
+fn show_cast(commands: &mut Commands, board: Entity, pb: &mut Playback, unit: UnitId, a: Ability) {
+    pb.anims.entry(unit).or_default().cast = CAST_SECS;
+    let (Some(at), Some(ground)) = (chest(pb, unit), feet(pb, unit)) else { return };
+    let ring = |from: f32, to: f32, c: Color, life: f32| {
+        effects::ring(ground, from, to).color(c).life(life)
+    };
+    match a {
+        Ability::FrostNova => {
+            ring(12.0, CELL * 1.6, ICE, 0.5).spawn(commands, board);
+            effects::burst(ground, CELL * 0.9).color(ICE).life(0.4).spawn(commands, board);
+            effects::spray(commands, board, ground, 16, 170.0, ICE);
+        }
+        Ability::Cleave => ring(14.0, CELL * 1.2, FIRE, 0.3).spawn(commands, board),
+        Ability::Rampage => {
+            ring(14.0, CELL * 1.8, FIRE, 0.4).spawn(commands, board);
+            effects::spray(commands, board, ground, 12, 150.0, DUST);
+        }
+        Ability::MassHeal => {
+            ring(12.0, CELL * 2.5, HEAL, 0.6).spawn(commands, board);
+            effects::burst(at, 36.0).color(HEAL).life(0.4).spawn(commands, board);
+        }
+        Ability::Sanctuary => {
+            ring(12.0, CELL * 2.5, HOLY, 0.6).spawn(commands, board);
+            ring(12.0, CELL * 1.6, HOLY, 0.5).delay(0.12).spawn(commands, board);
+        }
+        Ability::Heal => effects::burst(at, 22.0).color(HEAL).life(0.3).spawn(commands, board),
+        Ability::Taunt => {
+            ring(10.0, CELL * 1.5, BLOOD, 0.45).spawn(commands, board);
+            ring(10.0, CELL * 1.0, BLOOD, 0.35).delay(0.1).spawn(commands, board);
+        }
+        Ability::ShieldWall => ring(10.0, CELL * 1.4, SHIELD, 0.45).spawn(commands, board),
+        Ability::SecondWind => {
+            effects::burst(at, 40.0).color(HEAL).life(0.45).spawn(commands, board)
+        }
+        Ability::Frenzy => {
+            effects::ring(at, 40.0, 16.0).color(BLOOD).life(0.35).spawn(commands, board);
+            effects::ring(at, 40.0, 16.0)
+                .color(BLOOD)
+                .life(0.35)
+                .delay(0.15)
+                .spawn(commands, board);
+        }
+        Ability::Fireball | Ability::Firebolt => {
+            effects::burst(at, 20.0).color(FIRE).life(0.25).spawn(commands, board);
+        }
+        Ability::AimedShot | Ability::Volley => {
+            effects::ring(at, 30.0, 8.0).color(HOLY).life(0.3).spawn(commands, board);
+        }
+        Ability::Kite => effects::spray(commands, board, ground, 8, 60.0, DUST),
+        // These show where they land: puffs on `Teleported`, bursts on the hit.
+        Ability::Blink | Ability::Shadowstep | Ability::Backstab | Ability::Assassinate => {}
+    }
+}
+
+/// Lasting effects get a mark when they start: bubbles for shields, ice for
+/// freezing, a red pulse for frenzy.
+fn show_status(commands: &mut Commands, board: Entity, pb: &Playback, unit: UnitId, s: StatusKind) {
+    let Some(p) = chest(pb, unit) else { return };
+    // Bubbles move with the unit, so they are placed relative to its body.
+    let off = pb.bodies.get(&unit).map_or(Vec2::ZERO, |b| p - b.pos);
+    match s {
+        StatusKind::Shielded => {
+            effects::bubble(off, 34.0).color(SHIELD).life(0.9).follow(unit).spawn(commands, board);
+        }
+        StatusKind::Immune => {
+            effects::bubble(off, 36.0).color(HOLY).life(0.9).follow(unit).spawn(commands, board);
+        }
+        StatusKind::Frenzied => {
+            effects::burst(p, 30.0).color(BLOOD).life(0.3).spawn(commands, board);
+        }
+        StatusKind::Frozen => {
+            effects::burst(p, 30.0).color(ICE).life(0.5).spawn(commands, board);
+            effects::spray(commands, board, p, 8, 50.0, ICE);
+        }
+        StatusKind::Marked => {
+            effects::ring(p, 34.0, 18.0).color(BLOOD).life(0.4).spawn(commands, board);
+        }
+        StatusKind::Taunted { .. } => {
+            spawn_floater(commands, board, p, "Taunted".into(), color::BAD, 12.0);
+        }
     }
 }
 
@@ -595,6 +806,27 @@ fn move_bodies(time: Res<Time<Real>>, settings: Res<Settings>, mut pb: ResMut<Pl
     // which a borrow through the smart pointer would not allow.
     let pb = &mut *pb;
     motion::step(&mut pb.bodies, &pb.battle, field_centre, Vec2::new(BOARD_W, BOARD_H), dt);
+    pb.clock += dt;
+    for anim in pb.anims.values_mut() {
+        anim.flash = (anim.flash - dt).max(0.0);
+        anim.cast = (anim.cast - dt).max(0.0);
+        if let Some(t) = anim.dead_for.as_mut() {
+            *t += dt;
+        }
+    }
+}
+
+/// Grows, moves and fades spell effects (see `effects.rs`).
+#[allow(clippy::type_complexity)]
+fn animate_effects(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    settings: Res<Settings>,
+    pb: Res<Playback>,
+    mut q: Query<(Entity, &mut Effect, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
+) {
+    let dt = (time.delta_secs() * settings.speed as f32).min(0.1);
+    effects::animate(&mut commands, dt, &pb.bodies, &mut q);
 }
 
 /// Looses a projectile from `from` towards `target`'s body: a gold arrow, or
@@ -698,6 +930,59 @@ fn animate_floaters(
     }
 }
 
+/// How a unit's sprite is posed this frame, on top of where its body is.
+#[derive(Debug, PartialEq)]
+struct Pose {
+    /// Pixels up (negative) or down from its spot.
+    lift: f32,
+    /// Clockwise tilt in degrees.
+    lean: f32,
+    tint: Color,
+}
+
+/// Works out a unit's pose from its animation timers. Kept free of ECS types
+/// so it is easy to test.
+fn unit_pose(
+    unit: &battler_sim::Unit,
+    body: &Body,
+    anim: &UnitAnim,
+    clock: f32,
+    tick: u32,
+) -> Pose {
+    // Lean forwards, the way the sprite faces, so art facing left leans left.
+    let forward = if body.facing_left { -1.0 } else { 1.0 };
+    if let Some(t) = anim.dead_for.filter(|_| !unit.is_alive()) {
+        // Topple over sideways in the first third, then fade out.
+        let fall = (t / (DEATH_SECS * 0.35)).min(1.0);
+        let fade = 1.0 - ((t - DEATH_SECS * 0.35) / (DEATH_SECS * 0.65)).clamp(0.0, 1.0);
+        return Pose {
+            lift: 8.0 * fall,
+            lean: -90.0 * forward * fall * fall,
+            tint: Color::srgba(0.75, 0.70, 0.70, fade),
+        };
+    }
+    // Breathing: a 2-pixel bob, out of step between units.
+    let phase = unit.id.0 as f32 * 1.7;
+    let still = body.vel.length() < 18.0;
+    let mut lift = if still && (clock * 2.4 + phase).sin() > 0.4 { -2.0 } else { 0.0 };
+    // A hop when casting: up and down once.
+    if anim.cast > 0.0 {
+        let k = 1.0 - anim.cast / CAST_SECS;
+        lift -= (std::f32::consts::PI * k).sin() * 10.0;
+    }
+    let lean = 14.0 * forward * body.lunge_reach();
+    let tint = if anim.flash > 0.0 && anim.flash <= FLASH_SECS {
+        Color::srgb(1.0, 0.45, 0.45)
+    } else if unit.statuses.frozen_turns > 0 {
+        Color::srgb(0.65, 0.85, 1.0)
+    } else if unit.statuses.frenzied_until >= tick && tick > 0 {
+        Color::srgb(1.0, 0.80, 0.75)
+    } else {
+        Color::WHITE
+    };
+    Pose { lift: (lift / 2.0).round() * 2.0, lean, tint }
+}
+
 #[allow(clippy::type_complexity)]
 fn animate_units(
     pb: Res<Playback>,
@@ -706,7 +991,7 @@ fn animate_units(
         (&HpFill, &mut Node, &mut ImageNode),
         (Without<UnitView>, Without<Badge>, Without<UnitSprite>),
     >,
-    mut sprites: Query<(&UnitSprite, &mut ImageNode), Without<HpFill>>,
+    mut sprites: Query<(&UnitSprite, &mut ImageNode, &mut UiTransform), Without<HpFill>>,
     mut badges: Query<(&Badge, &mut Visibility, &Children), (Without<UnitView>, Without<HpFill>)>,
     mut letters: Query<(&StatusLetters, &mut Text)>,
     mut badge_text: Query<&mut Text, Without<StatusLetters>>,
@@ -718,7 +1003,9 @@ fn animate_units(
 
     for (view, mut node, mut z) in &mut views {
         let Some(unit) = battle.unit(view.0) else { continue };
-        if !unit.is_alive() {
+        // The dead stay up while they topple, then go.
+        let dying = pb.anims.get(&unit.id).and_then(|a| a.dead_for).is_some_and(|t| t < DEATH_SECS);
+        if !unit.is_alive() && !dying {
             node.display = Display::None;
             continue;
         }
@@ -736,11 +1023,23 @@ fn animate_units(
             z.0 = depth;
         }
     }
-    for (s, mut image) in &mut sprites {
-        if let Some(body) = pb.bodies.get(&s.0)
-            && image.flip_x != body.facing_left
-        {
+    for (s, mut image, mut transform) in &mut sprites {
+        let (Some(body), Some(unit)) = (pb.bodies.get(&s.0), battle.unit(s.0)) else { continue };
+        if image.flip_x != body.facing_left {
             image.flip_x = body.facing_left;
+        }
+        let anim = pb.anims.get(&s.0).copied().unwrap_or_default();
+        let pose = unit_pose(unit, body, &anim, pb.clock, tick);
+        if image.color != pose.tint {
+            image.color = pose.tint;
+        }
+        let t = UiTransform {
+            translation: Val2::px(0.0, pose.lift),
+            scale: Vec2::ONE,
+            rotation: Rot2::degrees(pose.lean),
+        };
+        if *transform != t {
+            *transform = t;
         }
     }
     for (bar, mut node, mut image) in &mut bars {
@@ -859,4 +1158,61 @@ fn refresh_trace(
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use battler_sim::{Character, Level, Program, UnitSpec};
+
+    /// One player unit facing right and one enemy facing left, with bodies.
+    fn setup() -> (Battle, HashMap<UnitId, Body>) {
+        let mut b = Battle::new(BOARD_DEPTH, BOARD_LANES, 50, 1);
+        for (team, x) in [(Team::Player, 3), (Team::Enemy, 4)] {
+            let spec = UnitSpec::new(Character::Nettle, Level::One, Program::new(Vec::new()));
+            b.spawn(team, Pos::new(x, 3), spec).expect("free cell");
+        }
+        let bodies = motion::spawn(&b, field_centre, |_| 22.0);
+        (b, bodies)
+    }
+
+    #[test]
+    fn a_resting_unit_only_breathes() {
+        let (b, bodies) = setup();
+        let u = &b.units()[0];
+        for i in 0..20 {
+            let pose = unit_pose(u, &bodies[&u.id], &UnitAnim::default(), i as f32 * 0.1, 0);
+            assert!(pose.lift == 0.0 || pose.lift == -2.0, "{pose:?}");
+            assert_eq!(pose.lean, 0.0);
+            assert_eq!(pose.tint, Color::WHITE);
+        }
+    }
+
+    #[test]
+    fn a_hit_flashes_red_and_a_cast_hops() {
+        let (b, bodies) = setup();
+        let u = &b.units()[0];
+        let hit = UnitAnim { flash: FLASH_SECS, ..default() };
+        assert_ne!(unit_pose(u, &bodies[&u.id], &hit, 0.0, 0).tint, Color::WHITE);
+        let cast = UnitAnim { cast: CAST_SECS / 2.0, ..default() };
+        assert!(unit_pose(u, &bodies[&u.id], &cast, 0.0, 0).lift <= -8.0);
+    }
+
+    #[test]
+    fn the_dead_topple_towards_their_facing_and_fade() {
+        let (b, bodies) = setup();
+        for u in b.units() {
+            let mut dead = u.clone();
+            dead.hp = 0;
+            let body = &bodies[&u.id];
+            let start = UnitAnim { dead_for: Some(0.0), ..default() };
+            let end = UnitAnim { dead_for: Some(DEATH_SECS), ..default() };
+            assert_eq!(unit_pose(&dead, body, &start, 0.0, 5).lean, 0.0);
+            let fallen = unit_pose(&dead, body, &end, 0.0, 5);
+            assert_eq!(fallen.lean.abs(), 90.0);
+            // Facing left (enemies) falls the other way to facing right.
+            assert_eq!(fallen.lean > 0.0, body.facing_left);
+            assert_eq!(fallen.tint.alpha(), 0.0);
+        }
+    }
 }
