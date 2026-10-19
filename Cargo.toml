@@ -12,7 +12,8 @@ repository = "https://github.com/ari0ch/battler"
 battler-sim = { path = "crates/sim" }
 # Pinned on purpose: Bevy is pre-1.0 and breaks APIs every release.
 # Upgrade deliberately, following the migration guide.
-bevy = { version = "0.20", default-features = false, features = ["2d", "ui"] }
+# `png` decodes the embedded character sprites.
+bevy = { version = "0.20", default-features = false, features = ["2d", "ui", "png"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

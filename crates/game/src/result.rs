@@ -6,6 +6,7 @@ use bevy::prelude::*;
 
 use crate::cards;
 use crate::planning::spawn_pips;
+use crate::sprites::{Sprites, sprite_node};
 use crate::state::{AppState, GameRun, LastReport, LobbyExt, Rev, RunPhase};
 use crate::ui::{
     self, ActionQueue, PRIMARY, SECONDARY, UiAction, color, column, row, spawn_button, text,
@@ -284,6 +285,7 @@ fn rebuild_game_over(
     mut commands: Commands,
     rev: Res<Rev>,
     run: Option<Res<GameRun>>,
+    sprites: Res<Sprites>,
     roots: Query<Entity, With<GameOverRoot>>,
 ) {
     if !rev.is_changed() {
@@ -381,11 +383,7 @@ fn rebuild_game_over(
                                 BorderColor::all(color::BLUE),
                             ))
                             .with_children(|t| {
-                                t.spawn(text(
-                                    cards::initials(unit.character),
-                                    16.0,
-                                    color::BLUE_TEXT,
-                                ));
+                                t.spawn(sprite_node(sprites.character(unit.character), 1.0, false));
                                 spawn_pips(t, unit.level);
                             });
                         }

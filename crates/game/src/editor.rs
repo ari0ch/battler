@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Button;
 
 use crate::cards::{self, action_label, cond_label};
+use crate::sprites::{Sprites, sprite_node};
 use crate::state::{DraftCard, LobbyExt, Planning, RunPhase};
 use crate::ui::{
     self, Block, Clickable, DragSource, DropTarget, Slot, UiAction, color, column, row, text,
@@ -67,11 +68,14 @@ fn try_draft(lobby: &mut Lobby, planning: &mut Planning, draft: Vec<DraftCard>) 
     }
 }
 
+/// Puts a block into a card, then re-fits the action's target to the
+/// condition (see [`cards::fit_target`]).
 fn put(card: &mut DraftCard, block: Block) {
     match block {
         Block::Cond(c) => card.cond = Some(c),
         Block::Act(a) => card.act = Some(a),
     }
+    card.act = card.act.map(|a| cards::fit_target(card.cond, a));
 }
 
 /// Drops a block into a specific card (an index one past the end starts a new card).
@@ -114,7 +118,7 @@ pub fn cycle_slot(lobby: &mut Lobby, planning: &mut Planning, card: usize, slot:
     let Some(c) = draft.get_mut(card) else { return };
     match slot {
         Slot::Cond => c.cond = c.cond.map(cards::cycle_condition),
-        Slot::Act => c.act = c.act.map(|a| cards::cycle_action(a, &unlocks, character)),
+        Slot::Act => c.act = c.act.map(|a| cards::cycle_action(a, c.cond, &unlocks, character)),
     }
     try_draft(lobby, planning, draft);
 }
@@ -137,7 +141,12 @@ pub fn card_up(lobby: &mut Lobby, planning: &mut Planning, card: usize) {
 
 // ----- Program column UI -----------------------------------------------
 
-pub fn spawn_program_panel(parent: &mut ChildSpawnerCommands, run: &Player, planning: &Planning) {
+pub fn spawn_program_panel(
+    parent: &mut ChildSpawnerCommands,
+    run: &Player,
+    planning: &Planning,
+    sprites: &Sprites,
+) {
     parent
         .spawn(ui::panel(Node {
             flex_grow: 1.0,
@@ -161,7 +170,7 @@ pub fn spawn_program_panel(parent: &mut ChildSpawnerCommands, run: &Player, plan
                 return;
             };
             let unlocks = run.unlocks();
-            header(p, unit, loc);
+            header(p, unit, loc, sprites);
             cards_list(p, run, planning, unit);
             p.spawn((Node { height: px(1), ..default() }, BackgroundColor(color::LINE)));
             palette(p, unit.character, &unlocks);
@@ -174,14 +183,14 @@ pub fn spawn_program_panel(parent: &mut ChildSpawnerCommands, run: &Player, plan
         });
 }
 
-fn header(p: &mut ChildSpawnerCommands, unit: &OwnedUnit, loc: Location) {
+fn header(p: &mut ChildSpawnerCommands, unit: &OwnedUnit, loc: Location, sprites: &Sprites) {
     let c = unit.character;
     let stats = unit.level.scale(c.base_stats());
     p.spawn(row(10.0)).with_children(|r| {
         r.spawn((
             Node {
-                width: px(36),
-                height: px(36),
+                width: px(40),
+                height: px(40),
                 flex_shrink: 0.0,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
@@ -194,7 +203,7 @@ fn header(p: &mut ChildSpawnerCommands, unit: &OwnedUnit, loc: Location) {
             Hovered::default(),
             cards::unit_tooltip(c, Some(unit.level), None),
         ))
-        .with_child(text(cards::initials(c), 14.0, color::BLUE_TEXT));
+        .with_child(sprite_node(sprites.character(c), 1.0, false));
         r.spawn(Node { flex_grow: 1.0, min_width: px(0), ..column(1.0) }).with_children(|col| {
             col.spawn(row(6.0)).with_children(|n| {
                 n.spawn(text(c.name(), 15.0, color::TEXT));
@@ -337,6 +346,39 @@ fn slot_box(
     e.insert(DropTarget::Card(card));
     if let Some(b) = block {
         e.insert(cards::block_tooltip(b, unlocks, character));
+    }
+    // An action with a target shows it as a pill, so it reads as a setting you
+    // can change: clicking the slot cycles it.
+    if let Some(Block::Act(a)) = block
+        && let Some(t) = a.target()
+    {
+        e.insert(Node {
+            flex_grow: 1.0,
+            flex_basis: px(0),
+            min_width: px(0),
+            justify_content: JustifyContent::FlexStart,
+            align_items: AlignItems::Center,
+            column_gap: px(6),
+            padding: UiRect::axes(px(8), px(4)),
+            border_radius: BorderRadius::all(px(6)),
+            overflow: Overflow::clip(),
+            ..default()
+        });
+        e.with_children(|slot| {
+            slot.spawn(text(cards::action_name(a), 12.0, ink));
+            slot.spawn((
+                Node {
+                    padding: UiRect::axes(px(5), px(1)),
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(5)),
+                    ..default()
+                },
+                BorderColor::all(ink.with_alpha(0.6)),
+                Pickable::IGNORE,
+            ))
+            .with_child(text(format!("{} v", cards::target_label(t)), 11.0, ink));
+        });
+        return;
     }
     e.with_child(text(label, 12.0, ink));
 }

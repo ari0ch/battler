@@ -10,6 +10,7 @@ mod editor;
 mod menu;
 mod planning;
 mod result;
+mod sprites;
 mod state;
 mod ui;
 
@@ -36,6 +37,8 @@ fn main() {
         .init_resource::<Settings>()
         .init_resource::<MenuUi>()
         .init_resource::<Planning>()
+        // After DefaultPlugins: decoding the sprites needs `Assets<Image>`.
+        .init_resource::<sprites::Sprites>()
         .add_plugins(ui::UiPlugin)
         .add_systems(Startup, |mut commands: Commands| {
             commands.spawn(Camera2d);

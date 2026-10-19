@@ -1,7 +1,12 @@
-//! The timed planning phase, all on one screen: header, synergy tracker, board
-//! and bench, the selected unit's program (see `editor.rs`), and the shop.
+//! The timed planning phase, all on one screen: header, synergy tracker, the
+//! next opponent, the player's half of the board and the bench, the selected
+//! unit's program (see `editor.rs`), the lobby standings, and the shop.
+//!
+//! The board is drawn rotated from sim coordinates, as in battle: lanes (`y`)
+//! run across the screen and the front row (`x = SIDE_DEPTH - 1`) is at the
+//! top, facing the enemy. Only the player's half is shown while planning.
 
-use battler_sim::run::economy::{BENCH_SIZE, BOARD_HEIGHT, PLAYER_COLUMNS, REROLL_COST, XP_COST};
+use battler_sim::run::economy::{BENCH_SIZE, BOARD_LANES, REROLL_COST, SIDE_DEPTH, XP_COST};
 use battler_sim::run::{Lobby, Location, OwnedUnit, Player, RoundKind};
 use battler_sim::{Class, Level, Pos, Wave};
 use bevy::picking::hover::Hovered;
@@ -11,6 +16,7 @@ use bevy::ui_widgets::Button;
 use crate::cards;
 use crate::editor::{self, HoveredAbility};
 use crate::result::ordinal;
+use crate::sprites::{Sprites, sprite_node};
 use crate::state::{GameRun, LobbyExt, ME, Planning, Rev, RunPhase};
 use crate::ui::{
     self, ActionQueue, Clickable, DragSource, DropTarget, PRIMARY, SECONDARY, UiAction, color,
@@ -30,10 +36,13 @@ impl Plugin for PlanningPlugin {
     }
 }
 
-pub const CELL: f32 = 70.0;
+pub const CELL: f32 = 72.0;
 pub const GAP: f32 = 4.0;
-const BOARD_PX: f32 = CELL * 8.0 + GAP * 7.0;
-const TILE: f32 = 58.0;
+/// The board's width on screen: one cell per lane.
+const BOARD_PX: f32 = CELL * BOARD_LANES as f32 + GAP * (BOARD_LANES as f32 - 1.0);
+/// Board tiles fit a 2x sprite (64 px) inside a 2 px border.
+const TILE: f32 = 68.0;
+const BENCH_TILE: f32 = 50.0;
 
 /// Seconds allowed for planning this round.
 pub fn planning_seconds(run: &Player) -> f32 {
@@ -176,6 +185,7 @@ fn rebuild(
     rev: Res<Rev>,
     run: Res<GameRun>,
     planning: Res<Planning>,
+    sprites: Res<Sprites>,
     roots: Query<Entity, With<PlanningRoot>>,
 ) {
     if !rev.is_changed() {
@@ -199,18 +209,20 @@ fn rebuild(
                 min_height: px(0),
                 padding: UiRect::new(px(20), px(20), px(14), px(12)),
                 align_items: AlignItems::Stretch,
-                ..row(16.0)
+                ..row(14.0)
             })
             .with_children(|body| {
                 synergy_column(body, run);
                 body.spawn(Node { width: px(BOARD_PX), flex_shrink: 0.0, ..column(8.0) })
                     .with_children(|mid| {
-                        board_section(mid, lobby, &planning);
-                        bench_section(mid, run, &planning);
+                        next_opponent(mid, lobby);
+                        board_section(mid, run, &planning, &sprites);
+                        bench_section(mid, run, &planning, &sprites);
                     });
-                editor::spawn_program_panel(body, run, &planning);
+                editor::spawn_program_panel(body, run, &planning, &sprites);
+                standings(body, lobby);
             });
-        shop(stage, run);
+        shop(stage, run, &sprites);
         notice(stage, &planning);
     });
 }
@@ -239,7 +251,7 @@ fn header(stage: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Planning) 
                 };
                 c.spawn(text(kind, 12.0, ink));
             });
-            h.spawn(Node { width: px(340), ..row(12.0) }).with_children(|lv| {
+            h.spawn(Node { width: px(360), ..row(12.0) }).with_children(|lv| {
                 lv.spawn(Node { width: px(170), ..column(5.0) }).with_children(|c| {
                     let xp = match run.xp_needed() {
                         Some(n) => format!("Level {} - XP {} / {n}", run.level(), run.xp()),
@@ -267,7 +279,7 @@ fn header(stage: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Planning) 
                     &format!("Buy XP {XP_COST} g (F)"),
                     UiAction::BuyXp,
                     SECONDARY,
-                    px(150),
+                    px(170),
                     px(40),
                 );
             });
@@ -294,7 +306,7 @@ fn header(stage: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Planning) 
                         TimerBar,
                     ));
                 });
-            h.spawn(Node { width: px(330), justify_content: JustifyContent::FlexEnd, ..row(20.0) })
+            h.spawn(Node { width: px(400), justify_content: JustifyContent::FlexEnd, ..row(20.0) })
                 .with_children(|r| {
                     stat(r, "Health", format!("{} / 100", run.hp()), color::TEXT);
                     stat(
@@ -343,9 +355,10 @@ fn notice(stage: &mut ChildSpawnerCommands, planning: &Planning) {
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
+                // Over the program panel, clear of the board.
                 top: px(70),
-                left: px(380),
-                width: px(520),
+                right: px(140),
+                width: px(420),
                 padding: UiRect::axes(px(18), px(12)),
                 border: UiRect::all(px(1)),
                 border_radius: BorderRadius::all(px(12)),
@@ -390,7 +403,7 @@ fn synergy_column(parent: &mut ChildSpawnerCommands, run: &Player) {
         .collect();
     classes.sort_by_key(|&c| std::cmp::Reverse(synergies.count(c)));
 
-    parent.spawn(Node { width: px(200), flex_shrink: 0.0, ..column(7.0) }).with_children(|col| {
+    parent.spawn(Node { width: px(170), flex_shrink: 0.0, ..column(7.0) }).with_children(|col| {
         col.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(0.0) })
             .with_children(|h| {
                 h.spawn(text("Synergies", 12.0, color::MUTED));
@@ -518,7 +531,8 @@ fn spawn_card_dots(parent: &mut ChildSpawnerCommands, filled: usize, max: usize)
     });
 }
 
-/// A draggable, clickable unit tile with a tooltip.
+/// A draggable, clickable unit tile with a tooltip: the sprite, with level
+/// pips and programmed-card dots along the bottom edge.
 fn unit_tile(
     parent: &mut ChildSpawnerCommands,
     run: &Player,
@@ -526,9 +540,12 @@ fn unit_tile(
     loc: Location,
     size: f32,
     selected: bool,
+    sprites: &Sprites,
 ) {
     let c = unit.character;
     let max = run.synergies().card_slots(c, unit.level);
+    // 2x on the board; 1x where tiles are small (the bench).
+    let scale = if size >= TILE { 2.0 } else { 1.0 };
     parent
         .spawn((
             Button,
@@ -541,10 +558,8 @@ fn unit_tile(
             Node {
                 width: px(size),
                 height: px(size),
-                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                row_gap: px(2),
                 border: UiRect::all(px(2)),
                 border_radius: BorderRadius::all(px(9)),
                 ..default()
@@ -563,23 +578,61 @@ fn unit_tile(
             ),
         ))
         .with_children(|t| {
-            t.spawn(text(
-                cards::initials(c),
-                if size > 50.0 { 16.0 } else { 14.0 },
-                color::BLUE_TEXT,
-            ));
-            spawn_pips(t, unit.level);
-            spawn_card_dots(t, unit.program.len(), max);
+            t.spawn(sprite_node(sprites.character(c), scale, false));
+            t.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(3),
+                    right: px(3),
+                    bottom: px(2),
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .with_children(|foot| {
+                spawn_pips(foot, unit.level);
+                spawn_card_dots(foot, unit.program.len(), max);
+            });
         });
 }
 
-fn board_section(parent: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Planning) {
-    let run = lobby.me();
-    let enemy_title = match lobby.round_kind() {
-        RoundKind::Pve(w) if w.is_boss() => format!("Next: boss - {}", w.name()),
-        RoundKind::Pve(w) => format!("Next: monsters - {}", w.name()),
-        RoundKind::Versus => format!("Next: versus - {} players left", lobby.alive_count()),
-    };
+/// A slim strip above the board: who or what the next battle is against.
+fn next_opponent(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
+    parent
+        .spawn((
+            Node {
+                padding: UiRect::axes(px(12), px(7)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(8)),
+                ..column(3.0)
+            },
+            BackgroundColor(color::CELL_ENEMY),
+            BorderColor::all(color::LINE),
+        ))
+        .with_children(|strip| match lobby.round_kind() {
+            RoundKind::Pve(wave) => wave_preview(strip, wave),
+            RoundKind::Versus => {
+                strip.spawn(text("Next: versus", 14.0, color::RED_TEXT));
+                strip.spawn(text(
+                    format!(
+                        "{} players left. Your opponent is drawn when the battle starts.",
+                        lobby.alive_count()
+                    ),
+                    11.0,
+                    color::MUTED,
+                ));
+            }
+        });
+}
+
+fn board_section(
+    parent: &mut ChildSpawnerCommands,
+    run: &Player,
+    planning: &Planning,
+    sprites: &Sprites,
+) {
     parent.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(0.0) }).with_children(
         |r| {
             r.spawn(text(
@@ -587,37 +640,15 @@ fn board_section(parent: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Pl
                 12.0,
                 color::MUTED,
             ));
-            r.spawn(text(enemy_title, 12.0, color::MUTED));
+            r.spawn(text("Front row (top) faces the enemy", 11.0, color::FAINT));
         },
     );
-    parent.spawn(row(GAP)).with_children(|halves| {
-        halves.spawn(column(GAP)).with_children(|board| player_half(board, run, planning));
-        halves
-            .spawn((
-                Node {
-                    width: px(CELL * 4.0 + GAP * 3.0),
-                    height: px(CELL * 5.0 + GAP * 4.0),
-                    padding: UiRect::all(px(12)),
-                    border: UiRect::all(px(1)),
-                    border_radius: BorderRadius::all(px(8)),
-                    overflow: Overflow::clip(),
-                    ..column(6.0)
-                },
-                BackgroundColor(color::CELL_ENEMY),
-                BorderColor::all(color::LINE),
-            ))
-            .with_children(|side| match lobby.round_kind() {
-                RoundKind::Pve(wave) => wave_preview(side, wave),
-                RoundKind::Versus => standings(side, lobby),
-            });
-    });
+    parent.spawn(column(GAP)).with_children(|board| player_half(board, run, planning, sprites));
 }
 
 /// What the monsters of a PvE round are, before the battle.
 fn wave_preview(parent: &mut ChildSpawnerCommands, wave: Wave) {
     let ink = if wave.is_boss() { color::BAD } else { color::GOOD };
-    parent.spawn(text(wave.name(), 17.0, ink));
-    parent.spawn(text(wave.hint(), 12.0, color::TEXT));
     let mut names: Vec<(&str, usize)> = Vec::new();
     for (_, spec) in wave.units() {
         let name = spec.kind.name();
@@ -626,69 +657,100 @@ fn wave_preview(parent: &mut ChildSpawnerCommands, wave: Wave) {
             None => names.push((name, 1)),
         }
     }
-    parent.spawn(Node { height: px(4), ..default() });
-    for (name, count) in names {
-        let label = if count > 1 { format!("{count} x {name}") } else { name.to_string() };
-        parent.spawn(text(label, 13.0, color::RED_TEXT));
-    }
+    let units: Vec<String> = names
+        .into_iter()
+        .map(|(name, count)| if count > 1 { format!("{count} x {name}") } else { name.to_string() })
+        .collect();
+    let kind = if wave.is_boss() { "Next: boss" } else { "Next: monsters" };
+    parent.spawn(row(10.0)).with_children(|r| {
+        r.spawn(text(format!("{kind} - {}", wave.name()), 14.0, ink));
+        r.spawn(text(units.join(", "), 12.0, color::RED_TEXT));
+    });
     let stakes = if wave.is_boss() {
-        "Win: gold reward. Lose: 2 + round number HP."
+        "Win: gold. Lose: extra damage, rising each round."
     } else {
         "Win: a little gold. Lose: 2 HP."
     };
-    parent
-        .spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, Pickable::IGNORE))
-        .with_child(text(stakes, 11.0, color::FAINT));
+    parent.spawn(text(format!("{} {stakes}", wave.hint()), 11.0, color::MUTED));
 }
 
-/// Every player's health, best first. Opponents are drawn when the battle starts.
+/// The lobby standings: a narrow sidebar, every player's health, best first.
 fn standings(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
-    parent.spawn(text("Standings", 13.0, color::MUTED));
     let mut players: Vec<&Player> = lobby.players().iter().collect();
     players.sort_by_key(|p| {
         (std::cmp::Reverse(p.is_alive()), std::cmp::Reverse(p.hp()), p.placement())
     });
-    for p in players {
-        let me = p.id() == ME;
-        let alive = p.is_alive();
-        let name_ink = if me {
-            color::GOLD_LIGHT
-        } else if alive {
-            color::TEXT
-        } else {
-            color::FAINT
-        };
-        parent.spawn(row(8.0)).with_children(|r| {
-            r.spawn(Node { width: px(88), ..default() }).with_child(text(p.name(), 13.0, name_ink));
-            if alive {
-                r.spawn((
-                    Node {
-                        width: px(90),
-                        height: px(6),
-                        border_radius: BorderRadius::all(px(3)),
-                        overflow: Overflow::clip(),
-                        ..default()
-                    },
-                    BackgroundColor(color::LINE),
-                ))
-                .with_child((
-                    Node { width: percent(p.hp() as f32), height: px(6), ..default() },
-                    BackgroundColor(if me { color::GOLD } else { color::HP_FILL }),
-                ));
-                r.spawn(text(format!("{} - L{}", p.hp(), p.level()), 12.0, color::MUTED));
-            } else {
-                let place = p.placement().map(ordinal).unwrap_or_default();
-                r.spawn(text(format!("out - {place}"), 12.0, color::FAINT));
+    parent
+        .spawn(ui::panel(Node {
+            width: px(104),
+            flex_shrink: 0.0,
+            padding: UiRect::axes(px(8), px(10)),
+            ..column(9.0)
+        }))
+        .with_children(|col| {
+            col.spawn(text("Players", 12.0, color::MUTED));
+            for p in players {
+                let me = p.id() == ME;
+                let alive = p.is_alive();
+                let name_ink = if me {
+                    color::GOLD_LIGHT
+                } else if alive {
+                    color::TEXT
+                } else {
+                    color::FAINT
+                };
+                col.spawn(column(3.0)).with_children(|entry| {
+                    entry
+                        .spawn(Node {
+                            justify_content: JustifyContent::SpaceBetween,
+                            overflow: Overflow::clip(),
+                            ..row(4.0)
+                        })
+                        .with_children(|r| {
+                            r.spawn(text(p.name(), 11.0, name_ink));
+                            let right = if alive {
+                                p.hp().to_string()
+                            } else {
+                                p.placement().map(ordinal).unwrap_or_default()
+                            };
+                            r.spawn(text(
+                                right,
+                                11.0,
+                                if alive { color::TEXT } else { color::FAINT },
+                            ));
+                        });
+                    if alive {
+                        entry
+                            .spawn((
+                                Node {
+                                    height: px(4),
+                                    border_radius: BorderRadius::all(px(2)),
+                                    overflow: Overflow::clip(),
+                                    ..default()
+                                },
+                                BackgroundColor(color::LINE),
+                            ))
+                            .with_child((
+                                Node { width: percent(p.hp() as f32), height: px(4), ..default() },
+                                BackgroundColor(if me { color::GOLD } else { color::HP_FILL }),
+                            ));
+                    }
+                });
             }
         });
-    }
 }
 
-/// The four player columns of the board, as rows of droppable cells.
-fn player_half(board: &mut ChildSpawnerCommands, run: &Player, planning: &Planning) {
-    for y in 0..BOARD_HEIGHT {
+/// The player's half of the board: one screen row per depth row, front row
+/// first, and one cell per lane across.
+fn player_half(
+    board: &mut ChildSpawnerCommands,
+    run: &Player,
+    planning: &Planning,
+    sprites: &Sprites,
+) {
+    for x in (0..SIDE_DEPTH).rev() {
         board.spawn(row(GAP)).with_children(|cells| {
-            for x in 0..PLAYER_COLUMNS {
+            for y in 0..BOARD_LANES {
                 let pos = Pos::new(x, y);
                 let cell_node = Node {
                     width: px(CELL),
@@ -713,14 +775,8 @@ fn player_half(board: &mut ChildSpawnerCommands, run: &Player, planning: &Planni
                     .with_children(|cell| {
                         let loc = Location::Board(pos);
                         if let Some(unit) = run.unit_at(loc) {
-                            unit_tile(
-                                cell,
-                                run,
-                                unit,
-                                loc,
-                                TILE,
-                                planning.selected == Some(unit.id),
-                            );
+                            let selected = planning.selected == Some(unit.id);
+                            unit_tile(cell, run, unit, loc, TILE, selected, sprites);
                         }
                     });
             }
@@ -728,7 +784,12 @@ fn player_half(board: &mut ChildSpawnerCommands, run: &Player, planning: &Planni
     }
 }
 
-fn bench_section(parent: &mut ChildSpawnerCommands, run: &Player, planning: &Planning) {
+fn bench_section(
+    parent: &mut ChildSpawnerCommands,
+    run: &Player,
+    planning: &Planning,
+    sprites: &Sprites,
+) {
     let used = run.bench().iter().flatten().count();
     parent
         .spawn(Node {
@@ -761,14 +822,15 @@ fn bench_section(parent: &mut ChildSpawnerCommands, run: &Player, planning: &Pla
                 .with_children(|slot| {
                     let loc = Location::Bench(i);
                     if let Some(unit) = run.unit_at(loc) {
-                        unit_tile(slot, run, unit, loc, 50.0, planning.selected == Some(unit.id));
+                        let selected = planning.selected == Some(unit.id);
+                        unit_tile(slot, run, unit, loc, BENCH_TILE, selected, sprites);
                     }
                 });
         }
     });
 }
 
-fn shop(stage: &mut ChildSpawnerCommands, run: &Player) {
+fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites) {
     stage
         .spawn((
             Node {
@@ -837,8 +899,8 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Player) {
                             card.spawn((row(9.0), Pickable::IGNORE)).with_children(|r| {
                                 r.spawn((
                                     Node {
-                                        width: px(34),
-                                        height: px(34),
+                                        width: px(40),
+                                        height: px(40),
                                         flex_shrink: 0.0,
                                         align_items: AlignItems::Center,
                                         justify_content: JustifyContent::Center,
@@ -850,10 +912,10 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Player) {
                                     BorderColor::all(cards::rarity_color(c.rarity())),
                                     Pickable::IGNORE,
                                 ))
-                                .with_child(text(
-                                    cards::initials(c),
-                                    13.0,
-                                    color::BLUE_TEXT,
+                                .with_child(sprite_node(
+                                    sprites.character(c),
+                                    1.0,
+                                    false,
                                 ));
                                 r.spawn((column(1.0), Pickable::IGNORE)).with_children(|col| {
                                     col.spawn(text(c.name(), 13.0, color::TEXT));

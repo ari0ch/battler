@@ -46,6 +46,7 @@ pub fn rarity_color(r: Rarity) -> Color {
 
 pub fn target_label(t: Target) -> &'static str {
     match t {
+        Target::It => "it",
         Target::Nearest => "nearest",
         Target::Weakest => "weakest",
         Target::Strongest => "strongest",
@@ -189,6 +190,9 @@ pub fn action_help(a: Action) -> String {
         }
     };
     match a.target() {
+        Some(Target::It) => {
+            format!("{base} Target: it, the unit this card's condition spotted (click to change).")
+        }
         Some(t) => format!("{base} Target: {} (click to change).", target_label(t)),
         None => base,
     }
@@ -313,8 +317,42 @@ pub fn cycle_condition(c: Condition) -> Condition {
     }
 }
 
-/// The next target this character may use, or the other signal colour.
-pub fn cycle_action(a: Action, unlocks: &Unlocks, character: Character) -> Action {
+/// The target an action gets when nothing better applies.
+fn default_target(a: Action) -> Option<Target> {
+    match a.ability() {
+        Some(ability) => Action::for_ability(ability).target(),
+        None if a.targets_allies() => a.target().map(|_| Target::Weakest),
+        None => a.target().map(|_| Target::Nearest),
+    }
+}
+
+/// True if `a` may target `it` after `cond` (an empty condition means "always").
+fn it_fits(cond: Option<Condition>, a: Action) -> bool {
+    let node = Node::new(cond.unwrap_or(Condition::Always), a.with_target(Target::It));
+    a.target().is_some() && !node.it_without_subject()
+}
+
+/// Picks the action's target to match its card's condition: `it` when the
+/// condition spots a unit on the action's side (`enemy weak -> Attack it`),
+/// and back to the default when an `it` target no longer has a unit to use.
+pub fn fit_target(cond: Option<Condition>, a: Action) -> Action {
+    if it_fits(cond, a) {
+        a.with_target(Target::It)
+    } else if a.target() == Some(Target::It) {
+        default_target(a).map_or(a, |t| a.with_target(t))
+    } else {
+        a
+    }
+}
+
+/// The next target this character may use on this card, or the other signal
+/// colour. `it` is offered only when the card's condition can supply a unit.
+pub fn cycle_action(
+    a: Action,
+    cond: Option<Condition>,
+    unlocks: &Unlocks,
+    character: Character,
+) -> Action {
     if let Action::SendSignal(s) = a {
         return Action::SendSignal(other_signal(s));
     }
@@ -324,7 +362,8 @@ pub fn cycle_action(a: Action, unlocks: &Unlocks, character: Character) -> Actio
     for step in 1..all.len() {
         let t = all[(start + step) % all.len()];
         let usable = unlocks.allows(t.requirement(), character)
-            && !(a.targets_allies() && t == Target::Marked);
+            && !(a.targets_allies() && t == Target::Marked)
+            && (t != Target::It || it_fits(cond, a));
         if usable {
             return a.with_target(t);
         }

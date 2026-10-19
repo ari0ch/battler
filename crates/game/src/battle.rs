@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use battler_sim::run::economy::{BOARD_DEPTH, BOARD_LANES};
 use battler_sim::run::{BattleSetup, Opponent};
 use battler_sim::{Battle, CardRef, Class, Event, Outcome, Pos, StatusKind, Team, UnitId};
 use bevy::picking::hover::Hovered;
@@ -12,6 +13,7 @@ use bevy::prelude::*;
 
 use crate::cards;
 use crate::planning::spawn_pips;
+use crate::sprites::{Sprites, sprite_node};
 use crate::state::{AppState, GameRun, LastReport, LobbyExt, Planning, Rev, RunPhase, Settings};
 use crate::ui::{self, SECONDARY, TOGGLED, UiAction, color, column, row, spawn_button, text};
 
@@ -35,10 +37,11 @@ impl Plugin for BattlePlugin {
 const TICK_SECONDS: f32 = 0.5;
 /// Pause on the final state before moving on.
 const END_PAUSE: f32 = 1.2;
-const PITCH: f32 = 76.0;
-const CELL: f32 = 72.0;
-const BOARD_W: f32 = PITCH * 8.0 - 4.0;
-const BOARD_H: f32 = PITCH * 5.0 - 4.0;
+/// Distance between cell origins; cells are `CELL` wide with a 4 px gap.
+const PITCH: f32 = 72.0;
+const CELL: f32 = 68.0;
+const BOARD_W: f32 = PITCH * BOARD_LANES as f32 - 4.0;
+const BOARD_H: f32 = PITCH * BOARD_DEPTH as f32 - 4.0;
 
 /// The battle being watched.
 #[derive(Resource)]
@@ -109,20 +112,26 @@ struct Floater {
     color: Color,
 }
 
+// The board is drawn rotated from sim coordinates: each lane (`y`) is a screen
+// column, and depth (`x`) runs up the screen, so the player's back row is at
+// the bottom and the enemy's back row at the top.
+
 fn cell_left(p: Pos) -> f32 {
-    p.x as f32 * PITCH + (CELL - 56.0) / 2.0
+    p.y as f32 * PITCH
 }
 
 fn cell_top(p: Pos) -> f32 {
-    p.y as f32 * PITCH + 2.0
+    (BOARD_DEPTH - 1 - p.x) as f32 * PITCH
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rebuild(
     mut commands: Commands,
     rev: Res<Rev>,
     pb: Res<Playback>,
     run: Option<Res<GameRun>>,
     settings: Res<Settings>,
+    sprites: Res<Sprites>,
     state: Res<State<AppState>>,
     roots: Query<Entity, With<BattleRoot>>,
 ) {
@@ -181,26 +190,35 @@ fn rebuild(
                 });
             });
 
-        // Board and trace.
+        // Legend and synergies, the board, and the card trace.
         stage
-            .spawn(Node { flex_grow: 1.0, padding: UiRect::axes(px(24), px(20)), min_height: px(0), ..row(20.0) })
+            .spawn(Node { flex_grow: 1.0, padding: UiRect::axes(px(24), px(10)), min_height: px(0), ..row(24.0) })
             .with_children(|body| {
-                body.spawn(Node { flex_grow: 1.0, justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..column(14.0) })
-                    .with_children(|left| {
-                        left.spawn(Node { width: px(BOARD_W), justify_content: JustifyContent::SpaceBetween, ..row(0.0) }).with_children(|r| {
-                            r.spawn(text("Your warband", 13.0, color::BLUE_TEXT));
-                            r.spawn(text(enemy_name.clone(), 13.0, color::RED_TEXT));
-                        });
-                        left.spawn((Node { width: px(BOARD_W), height: px(BOARD_H), ..default() }, BoardLayer))
+                body.spawn(Node { width: px(250), flex_shrink: 0.0, padding: UiRect::top(px(28)), ..column(16.0) })
+                    .with_children(|side| {
+                        synergy_strip(side, battle, Team::Enemy, "Enemy synergies", color::RED_TEXT);
+                        synergy_strip(side, battle, Team::Player, "Your synergies", color::BLUE_TEXT);
+                        side.spawn(text(
+                            "Badges: the card each unit ran. Letters: S shield, G guard, I immune, F frenzy, T taunted, Z frozen, M marked, V vanished.",
+                            11.0,
+                            color::FAINT,
+                        ));
+                    });
+                body.spawn(Node { flex_grow: 1.0, justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..column(6.0) })
+                    .with_children(|mid| {
+                        mid.spawn(Node { width: px(BOARD_W), ..row(0.0) })
+                            .with_child(text(enemy_name.clone(), 13.0, color::RED_TEXT));
+                        mid.spawn((Node { width: px(BOARD_W), height: px(BOARD_H), ..default() }, BoardLayer))
                             .with_children(|board| {
-                                for y in 0..5 {
-                                    for x in 0..8 {
-                                        let fill = if x < 4 { color::CELL } else { color::CELL_ENEMY };
+                                for x in 0..BOARD_DEPTH {
+                                    for y in 0..BOARD_LANES {
+                                        let p = Pos::new(x, y);
+                                        let fill = if x < BOARD_DEPTH / 2 { color::CELL } else { color::CELL_ENEMY };
                                         board.spawn((
                                             Node {
                                                 position_type: PositionType::Absolute,
-                                                left: px(x as f32 * PITCH),
-                                                top: px(y as f32 * PITCH),
+                                                left: px(cell_left(p)),
+                                                top: px(cell_top(p)),
                                                 width: px(CELL),
                                                 height: px(CELL),
                                                 border: UiRect::all(px(1)),
@@ -213,15 +231,11 @@ fn rebuild(
                                     }
                                 }
                                 for unit in battle.units() {
-                                    spawn_unit(board, unit);
+                                    spawn_unit(board, unit, &sprites);
                                 }
                             });
-                        synergy_strip(left, battle);
-                        left.spawn(text(
-                            "Badges: the card each unit ran. Letters: S shield, G guard, I immune, F frenzy, T taunted, Z frozen, M marked, V vanished.",
-                            11.0,
-                            color::FAINT,
-                        ));
+                        mid.spawn(Node { width: px(BOARD_W), ..row(0.0) })
+                            .with_child(text("Your warband", 13.0, color::BLUE_TEXT));
                     });
                 if settings.card_trace {
                     body.spawn((
@@ -233,12 +247,21 @@ fn rebuild(
     });
 }
 
-fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit) {
+fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprites: &Sprites) {
     let player = unit.team == Team::Player;
     let (fill, ring, ink) = if player {
         (color::BLUE_FILL, color::BLUE, color::BLUE_TEXT)
     } else {
         (color::RED_FILL, color::RED, color::RED_TEXT)
+    };
+    // An overlay pinned to one edge of the tile.
+    let overlay = |top: Option<f32>, bottom: Option<f32>, left: f32, right: f32| Node {
+        position_type: PositionType::Absolute,
+        top: top.map_or(Val::Auto, px),
+        bottom: bottom.map_or(Val::Auto, px),
+        left: px(left),
+        right: px(right),
+        ..default()
     };
     board
         .spawn((
@@ -247,15 +270,28 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit) {
                 position_type: PositionType::Absolute,
                 left: px(cell_left(unit.pos)),
                 top: px(cell_top(unit.pos)),
-                width: px(56),
-                flex_direction: FlexDirection::Column,
+                width: px(CELL),
+                height: px(CELL),
                 align_items: AlignItems::Center,
-                row_gap: px(3),
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(px(2)),
+                border_radius: BorderRadius::all(px(9)),
                 ..default()
             },
+            BackgroundColor(fill),
+            BorderColor::all(ring),
             ZIndex(1),
         ))
         .with_children(|v| {
+            // Player units face right; enemies are mirrored to face left.
+            match sprites.unit(unit.kind) {
+                Some(image) => {
+                    v.spawn(sprite_node(image, 2.0, !player));
+                }
+                None => {
+                    v.spawn(text(cards::initials(unit.kind), 17.0, ink));
+                }
+            }
             v.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -272,41 +308,33 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit) {
             .with_child(text("", 11.0, color::SIG_TEXT));
             v.spawn((
                 Node {
-                    width: px(56),
-                    height: px(6),
+                    height: px(5),
                     border_radius: BorderRadius::all(px(3)),
                     overflow: Overflow::clip(),
-                    ..default()
+                    ..overlay(Some(2.0), None, 4.0, 4.0)
                 },
                 BackgroundColor(color::LINE),
             ))
             .with_child((
-                Node { width: percent(100), height: px(6), ..default() },
+                Node { width: percent(100), height: px(5), ..default() },
                 BackgroundColor(color::HP_FILL),
                 HpFill(unit.id),
             ));
             v.spawn((
                 Node {
-                    width: px(56),
-                    height: px(56),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    row_gap: px(2),
-                    border: UiRect::all(px(2)),
-                    border_radius: BorderRadius::all(px(10)),
-                    ..default()
+                    justify_content: JustifyContent::SpaceBetween,
+                    ..overlay(None, Some(2.0), 4.0, 4.0)
                 },
-                BackgroundColor(fill),
-                BorderColor::all(ring),
+                Pickable::IGNORE,
             ))
-            .with_children(|t| {
-                t.spawn(text(cards::initials(unit.kind), 17.0, ink));
+            .with_children(|foot| {
                 // Monsters don't level up, so they show no pips.
                 if unit.kind.character().is_some() {
-                    spawn_pips(t, unit.level);
+                    spawn_pips(foot, unit.level);
+                } else {
+                    foot.spawn(Node::default());
                 }
-                t.spawn((text("", 10.0, color::GOLD_LIGHT), StatusLetters(unit.id)));
+                foot.spawn((text("", 10.0, color::GOLD_LIGHT), StatusLetters(unit.id)));
             });
         });
 }
@@ -454,7 +482,7 @@ fn spawn_floater(
         b.spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: px(cell_left(p) + 40.0),
+                left: px(cell_left(p) + 44.0),
                 top: px(top),
                 ..default()
             },
@@ -633,57 +661,48 @@ fn refresh_trace(
     });
 }
 
-/// Both sides' synergies under the board: active ones highlighted.
-fn synergy_strip(parent: &mut ChildSpawnerCommands, battle: &Battle) {
-    parent
-        .spawn(Node {
-            width: px(BOARD_W),
-            justify_content: JustifyContent::SpaceBetween,
-            ..row(12.0)
-        })
-        .with_children(|strip| {
-            for (team, label, ink) in [
-                (Team::Player, "Your synergies", color::BLUE_TEXT),
-                (Team::Enemy, "Enemy synergies", color::RED_TEXT),
-            ] {
-                let syn = battle.synergies(team);
-                strip.spawn(row(6.0)).with_children(|side| {
-                    side.spawn(text(label, 12.0, ink));
-                    let mut any = false;
-                    for class in Class::ALL {
-                        let count = syn.count(class);
-                        if count == 0 {
-                            continue;
-                        }
-                        any = true;
-                        let active = count >= 2;
-                        let (fill, line, ink) = if active {
-                            (color::ACTIVE_FILL, color::ACTIVE_LINE, color::GOLD_LIGHT)
-                        } else {
-                            (Color::NONE, color::LINE, color::FAINT)
-                        };
-                        side.spawn((
-                            Node {
-                                padding: UiRect::axes(px(7), px(2)),
-                                border: UiRect::all(px(1)),
-                                border_radius: BorderRadius::all(px(6)),
-                                ..default()
-                            },
-                            BackgroundColor(fill),
-                            BorderColor::all(line),
-                            Hovered::default(),
-                            cards::synergy_tooltip(class, &syn),
-                        ))
-                        .with_child(text(
-                            format!("{count} {}", class.plural()),
-                            12.0,
-                            ink,
-                        ));
-                    }
-                    if !any {
-                        side.spawn(text("none", 12.0, color::FAINT));
-                    }
-                });
+/// One side's synergies: active ones highlighted.
+fn synergy_strip(
+    parent: &mut ChildSpawnerCommands,
+    battle: &Battle,
+    team: Team,
+    label: &str,
+    ink: Color,
+) {
+    let syn = battle.synergies(team);
+    parent.spawn(column(6.0)).with_children(|side| {
+        side.spawn(text(label, 12.0, ink));
+        side.spawn(Node { flex_wrap: FlexWrap::Wrap, ..row(6.0) }).with_children(|chips| {
+            let mut any = false;
+            for class in Class::ALL {
+                let count = syn.count(class);
+                if count == 0 {
+                    continue;
+                }
+                any = true;
+                let (fill, line, ink) = if count >= 2 {
+                    (color::ACTIVE_FILL, color::ACTIVE_LINE, color::GOLD_LIGHT)
+                } else {
+                    (Color::NONE, color::LINE, color::FAINT)
+                };
+                chips
+                    .spawn((
+                        Node {
+                            padding: UiRect::axes(px(7), px(2)),
+                            border: UiRect::all(px(1)),
+                            border_radius: BorderRadius::all(px(6)),
+                            ..default()
+                        },
+                        BackgroundColor(fill),
+                        BorderColor::all(line),
+                        Hovered::default(),
+                        cards::synergy_tooltip(class, &syn),
+                    ))
+                    .with_child(text(format!("{count} {}", class.plural()), 12.0, ink));
+            }
+            if !any {
+                chips.spawn(text("none", 12.0, color::FAINT));
             }
         });
+    });
 }
