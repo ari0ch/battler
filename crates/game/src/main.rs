@@ -7,6 +7,7 @@ mod actions;
 mod battle;
 mod cards;
 mod editor;
+mod kit;
 mod menu;
 mod planning;
 mod result;
@@ -39,6 +40,7 @@ fn main() {
         .init_resource::<Planning>()
         // After DefaultPlugins: decoding the sprites needs `Assets<Image>`.
         .init_resource::<sprites::Sprites>()
+        .add_plugins(kit::KitPlugin)
         .add_plugins(ui::UiPlugin)
         .add_systems(Startup, |mut commands: Commands| {
             commands.spawn(Camera2d);

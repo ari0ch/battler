@@ -14,6 +14,8 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
 use bevy::window::PrimaryWindow;
 
+use crate::kit;
+
 /// Logical size the whole UI is designed for; it scales to fit the window.
 pub const STAGE_W: f32 = 1280.0;
 pub const STAGE_H: f32 = 720.0;
@@ -21,50 +23,49 @@ pub const STAGE_H: f32 = 720.0;
 pub mod color {
     use bevy::prelude::Color;
 
-    pub const BG: Color = Color::srgb(0.078, 0.071, 0.102);
-    pub const BG_DEEP: Color = Color::srgb(0.063, 0.055, 0.082);
-    pub const BAR: Color = Color::srgb(0.102, 0.090, 0.133);
-    pub const PANEL: Color = Color::srgb(0.118, 0.106, 0.149);
-    pub const PANEL_2: Color = Color::srgb(0.149, 0.133, 0.188);
-    pub const LINE: Color = Color::srgb(0.180, 0.165, 0.227);
-    pub const LINE_STRONG: Color = Color::srgb(0.227, 0.204, 0.282);
-    pub const CELL: Color = Color::srgb(0.141, 0.125, 0.180);
-    pub const CELL_ENEMY: Color = Color::srgb(0.102, 0.090, 0.133);
-    pub const TEXT: Color = Color::srgb(0.925, 0.910, 0.949);
-    pub const MUTED: Color = Color::srgb(0.643, 0.616, 0.702);
-    pub const FAINT: Color = Color::srgb(0.557, 0.525, 0.627);
-    pub const GOLD: Color = Color::srgb(0.890, 0.690, 0.294);
-    pub const GOLD_LIGHT: Color = Color::srgb(0.949, 0.788, 0.416);
-    pub const GOLD_DARK: Color = Color::srgb(0.227, 0.188, 0.098);
-    pub const ON_GOLD: Color = Color::srgb(0.102, 0.078, 0.031);
-    pub const BLUE: Color = Color::srgb(0.302, 0.549, 0.922);
+    // Fantasy-cartoon palette: deep plum ground, warm wood, cream text and gold
+    // trim, matching the pixel-art kit (`kit.rs`).
+    pub const BG: Color = Color::srgb(0.114, 0.102, 0.169);
+    pub const BG_DEEP: Color = Color::srgb(0.078, 0.067, 0.125);
+    pub const PANEL_2: Color = Color::srgb(0.227, 0.192, 0.314);
+    pub const LINE: Color = Color::srgb(0.290, 0.227, 0.165);
+    pub const LINE_STRONG: Color = Color::srgb(0.361, 0.227, 0.133);
+    pub const CELL: Color = Color::srgba(0.0, 0.0, 0.0, 0.0);
+    /// Grid lines drawn over the grass board.
+    pub const GRID: Color = Color::srgba(0.102, 0.078, 0.149, 0.45);
+    pub const CELL_HOVER: Color = Color::srgba(1.0, 0.95, 0.8, 0.18);
+    pub const TEXT: Color = Color::srgb(0.953, 0.902, 0.769);
+    pub const MUTED: Color = Color::srgb(0.804, 0.718, 0.561);
+    pub const FAINT: Color = Color::srgb(0.612, 0.518, 0.400);
+    /// Ink on parchment.
+    pub const INK: Color = Color::srgb(0.231, 0.141, 0.086);
+    pub const INK_MUTED: Color = Color::srgb(0.420, 0.302, 0.180);
+    pub const INK_FAINT: Color = Color::srgb(0.560, 0.450, 0.330);
+    pub const GOLD: Color = Color::srgb(0.957, 0.706, 0.106);
+    pub const GOLD_LIGHT: Color = Color::srgb(1.0, 0.824, 0.353);
+    pub const ON_GOLD: Color = Color::srgb(0.290, 0.165, 0.0);
+    pub const BLUE: Color = Color::srgb(0.314, 0.588, 1.0);
     pub const BLUE_FILL: Color = Color::srgb(0.114, 0.200, 0.322);
-    pub const BLUE_TEXT: Color = Color::srgb(0.812, 0.878, 0.980);
-    pub const RED: Color = Color::srgb(0.878, 0.341, 0.247);
-    pub const RED_FILL: Color = Color::srgb(0.290, 0.125, 0.098);
-    pub const RED_TEXT: Color = Color::srgb(0.973, 0.831, 0.800);
-    pub const GOOD: Color = Color::srgb(0.498, 0.831, 0.604);
-    pub const BAD: Color = Color::srgb(0.941, 0.604, 0.541);
+    pub const BLUE_TEXT: Color = Color::srgb(0.612, 0.827, 1.0);
+    pub const RED_TEXT: Color = Color::srgb(1.0, 0.604, 0.541);
+    pub const GOOD: Color = Color::srgb(0.608, 0.878, 0.478);
+    pub const BAD: Color = Color::srgb(1.0, 0.541, 0.478);
     pub const HP_FILL: Color = Color::srgb(0.373, 0.761, 0.494);
-    pub const HP_LOW: Color = Color::srgb(0.910, 0.639, 0.235);
-    pub const CRIT: Color = Color::srgb(0.961, 0.773, 0.259);
-    pub const COND_FILL: Color = Color::srgb(0.176, 0.231, 0.165);
-    pub const COND_LINE: Color = Color::srgb(0.247, 0.333, 0.224);
-    pub const COND_TEXT: Color = Color::srgb(0.749, 0.890, 0.710);
-    pub const ACT_FILL: Color = Color::srgb(0.165, 0.188, 0.275);
-    pub const ACT_LINE: Color = Color::srgb(0.235, 0.267, 0.384);
-    pub const ACT_TEXT: Color = Color::srgb(0.788, 0.827, 0.949);
-    pub const SIG_FILL: Color = Color::srgb(0.227, 0.173, 0.290);
-    pub const SIG_LINE: Color = Color::srgb(0.333, 0.251, 0.408);
-    pub const SIG_TEXT: Color = Color::srgb(0.863, 0.796, 0.949);
-    pub const REACH: Color = Color::srgb(0.173, 0.133, 0.251);
-    pub const REACH_LINE: Color = Color::srgb(0.431, 0.333, 0.604);
-    pub const COMMON: Color = Color::srgb(0.643, 0.616, 0.702);
-    pub const RARE: Color = Color::srgb(0.353, 0.655, 0.910);
-    pub const EPIC: Color = Color::srgb(0.710, 0.482, 0.910);
-    pub const XP: Color = Color::srgb(0.353, 0.655, 0.910);
-    pub const ACTIVE_FILL: Color = Color::srgb(0.165, 0.141, 0.086);
-    pub const ACTIVE_LINE: Color = Color::srgb(0.420, 0.333, 0.141);
+    pub const CRIT: Color = Color::srgb(1.0, 0.824, 0.353);
+    pub const COND_LINE: Color = Color::srgb(0.486, 0.776, 0.863);
+    pub const COND_TEXT: Color = Color::srgb(0.059, 0.165, 0.227);
+    pub const ACT_LINE: Color = Color::srgb(1.0, 0.824, 0.353);
+    pub const ACT_TEXT: Color = Color::srgb(0.227, 0.102, 0.016);
+    pub const SIG_LINE: Color = Color::srgb(0.604, 0.478, 0.769);
+    pub const SIG_TEXT: Color = Color::srgb(0.965, 0.933, 1.0);
+    pub const REACH: Color = Color::srgba(0.604, 0.478, 0.769, 0.35);
+    pub const COMMON: Color = Color::srgb(0.906, 0.827, 0.659);
+    pub const RARE: Color = Color::srgb(0.486, 0.776, 0.878);
+    pub const EPIC: Color = Color::srgb(0.851, 0.651, 1.0);
+    pub const ACTIVE_FILL: Color = Color::srgba(0.957, 0.706, 0.106, 0.14);
+    pub const ACTIVE_LINE: Color = Color::srgb(0.690, 0.478, 0.118);
+    /// Outline drawn around pixel-art text and numbers.
+    pub const OUTLINE: Color = Color::srgb(0.102, 0.078, 0.149);
 }
 
 /// A rule-card block: what the palette offers and what card slots hold.
@@ -152,6 +153,13 @@ pub struct HoverColors {
     pub hover: Color,
 }
 
+/// Image and tint for hover feedback on skinned (image) buttons.
+#[derive(Component, Debug, Clone)]
+pub struct HoverSkin {
+    pub normal: (Handle<Image>, Color),
+    pub hover: (Handle<Image>, Color),
+}
+
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
@@ -163,7 +171,7 @@ impl Plugin for UiPlugin {
             .add_observer(on_drag_end)
             .add_observer(on_drop)
             .add_systems(Startup, spawn_tooltip)
-            .add_systems(Update, (fit_ui_to_window, hover_colors, update_tooltip));
+            .add_systems(Update, (fit_ui_to_window, hover_colors, hover_skins, update_tooltip));
     }
 }
 
@@ -236,6 +244,14 @@ fn hover_colors(mut q: Query<(&Hovered, &HoverColors, &mut BackgroundColor), Cha
     }
 }
 
+fn hover_skins(mut q: Query<(&Hovered, &HoverSkin, &mut ImageNode), Changed<Hovered>>) {
+    for (hovered, skin, mut image) in &mut q {
+        let (handle, tint) = if hovered.get() { &skin.hover } else { &skin.normal };
+        image.image = handle.clone();
+        image.color = *tint;
+    }
+}
+
 #[derive(Component)]
 struct TooltipRoot;
 
@@ -247,15 +263,12 @@ fn spawn_tooltip(mut commands: Commands) {
             position_type: PositionType::Absolute,
             display: Display::None,
             width: px(TOOLTIP_W),
-            padding: UiRect::all(px(12)),
+            padding: UiRect::all(px(18)),
             flex_direction: FlexDirection::Column,
             row_gap: px(5),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(10)),
             ..default()
         },
-        BackgroundColor(color::PANEL),
-        BorderColor::all(color::LINE_STRONG),
+        kit::sliced(kit::img::PANEL_WOOD, 10.0),
         GlobalZIndex(1000),
         Pickable::IGNORE,
     ));
@@ -269,10 +282,10 @@ fn update_tooltip(
     window: Single<&Window, With<PrimaryWindow>>,
     scale: Res<UiScale>,
     hovered: Query<(Entity, &Hovered, &Tooltip)>,
-    root: Single<(Entity, &mut Node, &mut BorderColor), With<TooltipRoot>>,
+    root: Single<(Entity, &mut Node), With<TooltipRoot>>,
     mut showing: Local<Option<Entity>>,
 ) {
-    let (root_entity, mut node, mut border) = root.into_inner();
+    let (root_entity, mut node) = root.into_inner();
     let target = hovered.iter().find(|(_, h, _)| h.get());
     let (Some((entity, _, tip)), Some(cursor)) = (target, window.cursor_position()) else {
         node.display = Display::None;
@@ -294,9 +307,8 @@ fn update_tooltip(
     node.top = px(y);
     if *showing != Some(entity) {
         *showing = Some(entity);
-        border.set_all(tip.accent);
         commands.entity(root_entity).despawn_children().with_children(|t| {
-            t.spawn(text(tip.title.clone(), 15.0, color::TEXT));
+            t.spawn(heading(tip.title.clone(), 16.0, tip.accent));
             for (line, ink) in &tip.lines {
                 t.spawn(text(line.clone(), 12.0, *ink));
             }
@@ -339,47 +351,105 @@ pub fn spawn_stage(commands: &mut Commands, scope: impl Bundle, background: Colo
     stage
 }
 
-/// Text that never intercepts the pointer (so clicks reach the button behind it).
+fn text_font(size: f32, weight: FontWeight) -> TextFont {
+    TextFont { font: kit::FONT.into(), font_size: FontSize::Px(size), weight, ..default() }
+}
+
+/// Text in the kit's pixel font that never intercepts the pointer (so clicks
+/// reach the button behind it).
 pub fn text(value: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    (
-        Text::new(value),
-        TextFont { font_size: FontSize::Px(size), ..default() },
-        TextColor(color),
-        Pickable::IGNORE,
-    )
+    (Text::new(value), text_font(size, FontWeight::NORMAL), TextColor(color), Pickable::IGNORE)
+}
+
+/// Bold text for titles and numbers.
+pub fn heading(value: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    (Text::new(value), text_font(size, FontWeight::BOLD), TextColor(color), Pickable::IGNORE)
+}
+
+/// Bold text with a dark drop shadow, for numbers over the battlefield.
+pub fn outlined(value: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    (heading(value, size, color), TextShadow { offset: Vec2::new(2.0, 2.0), color: color::OUTLINE })
+}
+
+/// What a button is drawn with.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Skin {
+    /// A wooden plank (most buttons).
+    Wood,
+    /// Gold, for the main action on a screen.
+    Gold,
+    /// A pressed-in plank, for toggles that are on.
+    Pressed,
+    /// A parchment card in a wooden frame (shop offers).
+    Parchment,
+    /// A flat coloured box, using the style's colours.
+    Flat,
 }
 
 /// Visual style for [`button`].
 #[derive(Clone, Copy)]
 pub struct ButtonStyle {
+    pub skin: Skin,
     pub fill: Color,
     pub hover: Color,
     pub border: Color,
 }
 
-pub const PRIMARY: ButtonStyle =
-    ButtonStyle { fill: color::GOLD, hover: color::GOLD_LIGHT, border: color::GOLD };
-pub const SECONDARY: ButtonStyle =
-    ButtonStyle { fill: color::PANEL, hover: color::PANEL_2, border: color::LINE_STRONG };
-pub const TOGGLED: ButtonStyle =
-    ButtonStyle { fill: color::GOLD_DARK, hover: color::GOLD_DARK, border: color::GOLD };
+impl ButtonStyle {
+    /// A flat box in the given colours.
+    pub const fn flat(fill: Color, hover: Color, border: Color) -> Self {
+        Self { skin: Skin::Flat, fill, hover, border }
+    }
+
+    const fn skinned(skin: Skin) -> Self {
+        Self { skin, fill: Color::NONE, hover: Color::NONE, border: Color::NONE }
+    }
+
+    /// The text colour that reads well on this style.
+    pub fn ink(&self) -> Color {
+        match self.skin {
+            Skin::Gold => color::ON_GOLD,
+            Skin::Pressed => color::GOLD_LIGHT,
+            Skin::Parchment => color::INK,
+            Skin::Wood | Skin::Flat => color::TEXT,
+        }
+    }
+}
+
+pub const PRIMARY: ButtonStyle = ButtonStyle::skinned(Skin::Gold);
+pub const SECONDARY: ButtonStyle = ButtonStyle::skinned(Skin::Wood);
+pub const TOGGLED: ButtonStyle = ButtonStyle::skinned(Skin::Pressed);
+pub const PARCHMENT: ButtonStyle = ButtonStyle::skinned(Skin::Parchment);
 
 /// A clickable box. Add content as children.
+///
+/// `impl Bundle` must be one concrete type, so every skin produces the same
+/// set of components and only their values differ: image skins get a sliced
+/// image and no background colour; flat buttons get colours and a hidden image.
 pub fn button(action: UiAction, style: ButtonStyle, node: Node) -> impl Bundle {
+    // Gold and parchment brighten on hover; wood swaps to a lighter plank.
+    let dim = Color::srgb(0.88, 0.88, 0.88);
+    let (image, slice, normal_tint, hover_image, hover_tint) = match style.skin {
+        Skin::Wood => (kit::img::BUTTON, 6.0, Color::WHITE, kit::img::BUTTON_HOVER, Color::WHITE),
+        Skin::Gold => (kit::img::BUTTON_GOLD, 6.0, dim, kit::img::BUTTON_GOLD, Color::WHITE),
+        Skin::Pressed => {
+            (kit::img::BUTTON_PRESSED, 6.0, Color::WHITE, kit::img::BUTTON_PRESSED, Color::WHITE)
+        }
+        Skin::Parchment => {
+            (kit::img::PANEL_PARCHMENT, 10.0, dim, kit::img::PANEL_PARCHMENT, Color::WHITE)
+        }
+        Skin::Flat => (Handle::default(), 1.0, Color::NONE, Handle::default(), Color::NONE),
+    };
     (
         Button,
         Hovered::default(),
         Clickable(action),
-        Node {
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(8)),
-            ..node
-        },
+        Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..node },
         BackgroundColor(style.fill),
         BorderColor::all(style.border),
         HoverColors { normal: style.fill, hover: style.hover },
+        kit::sliced(image.clone(), slice).with_color(normal_tint),
+        HoverSkin { normal: (image, normal_tint), hover: (hover_image, hover_tint) },
     )
 }
 
@@ -392,23 +462,18 @@ pub fn spawn_button(
     width: Val,
     height: Val,
 ) {
-    let text_color = if style.fill == color::GOLD { color::ON_GOLD } else { color::TEXT };
     parent
         .spawn(button(
             action,
             style,
             Node { width, height, padding: UiRect::horizontal(px(14)), ..default() },
         ))
-        .with_child(text(label, 16.0, text_color));
+        .with_child(heading(label, 16.0, style.ink()));
 }
 
-/// A simple filled panel node.
+/// A dark wooden panel (light text goes on it). Its padding clears the frame.
 pub fn panel(node: Node) -> impl Bundle {
-    (
-        Node { border: UiRect::all(px(1)), border_radius: BorderRadius::all(px(12)), ..node },
-        BackgroundColor(color::PANEL),
-        BorderColor::all(color::LINE),
-    )
+    kit::wood_panel(node)
 }
 
 /// A row with a gap, for laying out children horizontally.

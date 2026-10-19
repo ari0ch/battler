@@ -10,10 +10,12 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Button;
 
 use crate::cards::{self, action_label, cond_label};
+use crate::kit;
 use crate::sprites::{Sprites, sprite_node};
 use crate::state::{DraftCard, LobbyExt, Planning, RunPhase};
 use crate::ui::{
-    self, Block, Clickable, DragSource, DropTarget, Slot, UiAction, color, column, row, text,
+    self, Block, Clickable, DragSource, DropTarget, Slot, UiAction, color, column, heading, row,
+    text,
 };
 
 pub struct EditorPlugin;
@@ -148,15 +150,15 @@ pub fn spawn_program_panel(
     sprites: &Sprites,
 ) {
     parent
-        .spawn(ui::panel(Node {
+        .spawn(kit::parchment_panel(Node {
             flex_grow: 1.0,
             min_width: px(0),
-            padding: UiRect::all(px(12)),
-            ..column(9.0)
+            padding: UiRect::axes(px(18), px(16)),
+            ..column(8.0)
         }))
         .with_children(|p| {
             let Some((loc, unit)) = selected_unit(run, planning) else {
-                p.spawn(text("No unit selected", 16.0, color::TEXT));
+                p.spawn(heading("No unit selected", 17.0, color::INK));
                 for line in [
                     "Buy units in the shop below. They go straight",
                     "onto the board when there's room.",
@@ -165,20 +167,20 @@ pub fn spawn_program_panel(
                     "to sell it. Hover anything for details.",
                     "Keys: D reroll, F buy XP, E sell hovered unit.",
                 ] {
-                    p.spawn(text(line, 13.0, color::MUTED));
+                    p.spawn(text(line, 13.0, color::INK_MUTED));
                 }
                 return;
             };
             let unlocks = run.unlocks();
             header(p, unit, loc, sprites);
             cards_list(p, run, planning, unit);
-            p.spawn((Node { height: px(1), ..default() }, BackgroundColor(color::LINE)));
+            p.spawn((Node { height: px(2), ..default() }, BackgroundColor(DIVIDER)));
             palette(p, unit.character, &unlocks);
             p.spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, Pickable::IGNORE))
                 .with_child(text(
                     "Drag or click blocks into cards - click a placed block to change it",
                     11.0,
-                    color::FAINT,
+                    color::INK_FAINT,
                 ));
         });
 }
@@ -189,28 +191,26 @@ fn header(p: &mut ChildSpawnerCommands, unit: &OwnedUnit, loc: Location, sprites
     p.spawn(row(10.0)).with_children(|r| {
         r.spawn((
             Node {
-                width: px(40),
-                height: px(40),
+                width: px(48),
+                height: px(48),
                 flex_shrink: 0.0,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                border: UiRect::all(px(2)),
-                border_radius: BorderRadius::all(px(8)),
                 ..default()
             },
-            BackgroundColor(color::BLUE_FILL),
-            BorderColor::all(cards::rarity_color(c.rarity())),
+            kit::sliced(kit::rarity_frame(c.rarity()), 6.0),
             Hovered::default(),
             cards::unit_tooltip(c, Some(unit.level), None),
         ))
         .with_child(sprite_node(sprites.character(c), 1.0, false));
         r.spawn(Node { flex_grow: 1.0, min_width: px(0), ..column(1.0) }).with_children(|col| {
             col.spawn(row(6.0)).with_children(|n| {
-                n.spawn(text(c.name(), 15.0, color::TEXT));
+                n.spawn(heading(c.short_name(), 18.0, color::INK));
+                n.spawn(kit::icon(kit::class_icon(c.class()), 18.0));
                 n.spawn(text(
                     format!("{} {}", c.rarity().name(), c.class().name()),
-                    11.0,
-                    cards::rarity_color(c.rarity()),
+                    12.0,
+                    color::INK_MUTED,
                 ));
             });
             let place = if matches!(loc, Location::Bench(_)) { " - bench" } else { "" };
@@ -222,21 +222,20 @@ fn header(p: &mut ChildSpawnerCommands, unit: &OwnedUnit, loc: Location, sprites
                     stats.attack,
                     stats.range
                 ),
-                11.0,
-                color::MUTED,
+                12.0,
+                color::INK_MUTED,
             ));
         });
         r.spawn(ui::button(
             UiAction::Sell,
             ui::SECONDARY,
-            Node {
-                height: px(32),
-                padding: UiRect::horizontal(px(10)),
-                border_radius: BorderRadius::all(px(7)),
-                ..default()
-            },
+            Node { height: px(36), padding: UiRect::horizontal(px(10)), ..row(4.0) },
         ))
-        .with_child(text(format!("Sell {} g", unit.sell_value()), 12.0, color::TEXT));
+        .with_children(|b| {
+            b.spawn(heading("Sell", 13.0, color::TEXT));
+            b.spawn(kit::icon(kit::img::ICON_COIN, 16.0));
+            b.spawn(heading(unit.sell_value().to_string(), 13.0, color::TEXT));
+        });
     });
 }
 
@@ -250,22 +249,12 @@ fn cards_list(p: &mut ChildSpawnerCommands, run: &Player, planning: &Planning, u
         if planning.draft.len() < max {
             card_row(list, planning.draft.len(), None, &unlocks, unit.character);
         }
-        list.spawn((
-            Node {
-                padding: UiRect::axes(px(8), px(5)),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(7)),
-                ..row(6.0)
-            },
-            BackgroundColor(color::BG_DEEP),
-            BorderColor::all(color::LINE),
-        ))
-        .with_child(text("locked: otherwise attack nearest", 11.0, color::FAINT));
+        list.spawn(text("Otherwise: attack nearest (always last, locked)", 12.0, color::INK_MUTED));
         if planning.draft.len() >= max {
             list.spawn(text(
                 format!("{max} of {max} cards - merge copies for more"),
                 11.0,
-                color::FAINT,
+                color::INK_FAINT,
             ));
         }
     });
@@ -279,36 +268,40 @@ fn card_row(
     character: Character,
 ) {
     let filled = card.is_some();
-    let (fill, line) =
-        if filled { (color::PANEL_2, color::LINE_STRONG) } else { (color::BG, color::LINE) };
-    list.spawn((
-        Node {
-            padding: UiRect::axes(px(7), px(5)),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(8)),
-            ..row(6.0)
-        },
-        BackgroundColor(fill),
-        BorderColor::all(line),
-    ))
-    .with_children(|r| {
-        r.spawn(Node { width: px(12), ..default() }).with_child(text(
-            (index + 1).to_string(),
-            11.0,
-            color::FAINT,
-        ));
-        let cond: Option<Condition> = card.and_then(|c| c.cond);
-        let act: Option<Action> = card.and_then(|c| c.act);
-        slot_box(r, index, Slot::Cond, cond.map(Block::Cond), unlocks, character);
-        r.spawn(text("->", 11.0, color::FAINT));
-        slot_box(r, index, Slot::Act, act.map(Block::Act), unlocks, character);
-        if filled {
-            if index > 0 {
-                small_button(r, "up", UiAction::CardUp(index));
+    // Filled cards sit on a parchment strip; the next empty one is dashed.
+    let strip = if filled { kit::img::CARD_ROW } else { kit::img::TAG_EMPTY };
+    list.spawn((Node { padding: UiRect::axes(px(6), px(5)), ..row(6.0) }, kit::sliced(strip, 4.0)))
+        .with_children(|r| {
+            // The card number on a red wax seal.
+            r.spawn((
+                Node {
+                    width: px(26),
+                    height: px(26),
+                    flex_shrink: 0.0,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                ImageNode::new(kit::img::WAX_SEAL),
+                Pickable::IGNORE,
+            ))
+            .with_child(heading(
+                (index + 1).to_string(),
+                12.0,
+                Color::srgb(1.0, 0.906, 0.886),
+            ));
+            let cond: Option<Condition> = card.and_then(|c| c.cond);
+            let act: Option<Action> = card.and_then(|c| c.act);
+            slot_box(r, index, Slot::Cond, cond.map(Block::Cond), unlocks, character);
+            r.spawn(heading(">", 14.0, Color::srgb(0.549, 0.353, 0.165)));
+            slot_box(r, index, Slot::Act, act.map(Block::Act), unlocks, character);
+            if filled {
+                if index > 0 {
+                    small_button(r, "up", UiAction::CardUp(index));
+                }
+                small_button(r, "x", UiAction::ClearCard(index));
             }
-            small_button(r, "x", UiAction::ClearCard(index));
-        }
-    });
+        });
 }
 
 fn slot_box(
@@ -319,10 +312,7 @@ fn slot_box(
     unlocks: &Unlocks,
     character: Character,
 ) {
-    let (fill, line, ink) = match block {
-        None => (color::BG, color::LINE_STRONG, color::FAINT),
-        Some(b) => chip_colors(b),
-    };
+    let ink = block.map_or(color::INK_FAINT, block_ink);
     let label = match (slot, block) {
         (_, Some(Block::Cond(c))) => cond_label(c),
         (_, Some(Block::Act(a))) => action_label(a),
@@ -331,19 +321,21 @@ fn slot_box(
     };
     let mut e = parent.spawn(ui::button(
         UiAction::CycleSlot(card, slot),
-        ui::ButtonStyle { fill, hover: line, border: line },
+        ui::ButtonStyle::flat(Color::NONE, Color::NONE, Color::NONE),
         Node {
             flex_grow: 1.0,
             flex_basis: px(0),
             min_width: px(0),
+            height: px(30),
             justify_content: JustifyContent::FlexStart,
-            padding: UiRect::axes(px(8), px(5)),
-            border_radius: BorderRadius::all(px(6)),
+            padding: UiRect::axes(px(9), px(4)),
             overflow: Overflow::clip(),
             ..default()
         },
     ));
-    e.insert(DropTarget::Card(card));
+    // The block's coloured tag, or a dashed outline when empty.
+    e.insert((DropTarget::Card(card), kit::sliced(tag_image(block), 4.0)))
+        .remove::<ui::HoverSkin>();
     if let Some(b) = block {
         e.insert(cards::block_tooltip(b, unlocks, character));
     }
@@ -356,31 +348,31 @@ fn slot_box(
             flex_grow: 1.0,
             flex_basis: px(0),
             min_width: px(0),
+            height: px(30),
             justify_content: JustifyContent::FlexStart,
             align_items: AlignItems::Center,
             column_gap: px(6),
-            padding: UiRect::axes(px(8), px(4)),
-            border_radius: BorderRadius::all(px(6)),
+            padding: UiRect::axes(px(9), px(4)),
             overflow: Overflow::clip(),
             ..default()
         });
         e.with_children(|slot| {
-            slot.spawn(text(cards::action_name(a), 12.0, ink));
+            slot.spawn(heading(cards::action_name(a), 13.0, ink));
             slot.spawn((
                 Node {
                     padding: UiRect::axes(px(5), px(1)),
-                    border: UiRect::all(px(1)),
-                    border_radius: BorderRadius::all(px(5)),
+                    border: UiRect::all(px(2)),
                     ..default()
                 },
-                BorderColor::all(ink.with_alpha(0.6)),
+                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.18)),
+                BorderColor::all(Color::srgba(0.102, 0.078, 0.149, 0.55)),
                 Pickable::IGNORE,
             ))
-            .with_child(text(format!("{} v", cards::target_label(t)), 11.0, ink));
+            .with_child(heading(format!("{} v", cards::target_label(t)), 12.0, ink));
         });
         return;
     }
-    e.with_child(text(label, 12.0, ink));
+    e.with_child(heading(label, 13.0, ink));
 }
 
 fn small_button(parent: &mut ChildSpawnerCommands, label: &str, action: UiAction) {
@@ -388,24 +380,31 @@ fn small_button(parent: &mut ChildSpawnerCommands, label: &str, action: UiAction
         .spawn(ui::button(
             action,
             ui::SECONDARY,
-            Node {
-                width: px(24),
-                height: px(22),
-                flex_shrink: 0.0,
-                border_radius: BorderRadius::all(px(5)),
-                ..default()
-            },
+            Node { width: px(30), height: px(30), flex_shrink: 0.0, ..default() },
         ))
-        .with_child(text(label, 10.0, color::MUTED));
+        .with_child(heading(label, 12.0, color::TEXT));
 }
 
-fn chip_colors(block: Block) -> (Color, Color, Color) {
+/// The divider colour between sections of the parchment panel.
+const DIVIDER: Color = Color::srgb(0.788, 0.663, 0.431);
+
+/// The coloured tag a block sits on: blue conditions, orange actions, purple
+/// signature abilities. `None` is an empty, dashed slot.
+fn tag_image(block: Option<Block>) -> Handle<Image> {
     match block {
-        Block::Cond(_) => (color::COND_FILL, color::COND_LINE, color::COND_TEXT),
-        Block::Act(a) if a.ability().is_some() => {
-            (color::SIG_FILL, color::SIG_LINE, color::SIG_TEXT)
-        }
-        Block::Act(_) => (color::ACT_FILL, color::ACT_LINE, color::ACT_TEXT),
+        None => kit::img::TAG_EMPTY,
+        Some(Block::Cond(_)) => kit::img::TAG_CONDITION,
+        Some(Block::Act(a)) if a.ability().is_some() => kit::img::TAG_SIGNATURE,
+        Some(Block::Act(_)) => kit::img::TAG_ACTION,
+    }
+}
+
+/// Text colour that reads on a block's tag.
+fn block_ink(block: Block) -> Color {
+    match block {
+        Block::Cond(_) => color::COND_TEXT,
+        Block::Act(a) if a.ability().is_some() => color::SIG_TEXT,
+        Block::Act(_) => color::ACT_TEXT,
     }
 }
 
@@ -414,13 +413,11 @@ fn chip_colors(block: Block) -> (Color, Color, Color) {
 /// notice announces them).
 fn chip(parent: &mut ChildSpawnerCommands, block: Block, unlocks: &Unlocks, character: Character) {
     let tooltip = cards::block_tooltip(block, unlocks, character);
-    let node = Node {
-        padding: UiRect::axes(px(7), px(3)),
-        border: UiRect::all(px(1)),
-        border_radius: BorderRadius::all(px(6)),
-        ..default()
-    };
-    let (fill, line, ink) = chip_colors(block);
+    let node = Node { height: px(28), padding: UiRect::axes(px(8), px(3)), ..row(0.0) };
+    let ink = block_ink(block);
+    // Dimmed until hovered, so the block under the pointer stands out.
+    let dim = Color::srgb(0.9, 0.9, 0.9);
+    let image = tag_image(Some(block));
     let mut e = parent.spawn((
         Button,
         Hovered::default(),
@@ -429,9 +426,8 @@ fn chip(parent: &mut ChildSpawnerCommands, block: Block, unlocks: &Unlocks, char
         Pickable { should_block_lower: false, is_hoverable: true },
         GlobalZIndex::default(),
         node,
-        BackgroundColor(fill),
-        BorderColor::all(line),
-        ui::HoverColors { normal: fill, hover: line },
+        kit::sliced(image.clone(), 4.0).with_color(dim),
+        ui::HoverSkin { normal: (image.clone(), dim), hover: (image, Color::WHITE) },
         tooltip,
     ));
     if let Block::Act(a) = block
@@ -439,18 +435,19 @@ fn chip(parent: &mut ChildSpawnerCommands, block: Block, unlocks: &Unlocks, char
     {
         e.insert(PaletteAbility(ability));
     }
-    e.with_child(text(cards::block_label(block), 11.0, ink));
+    e.with_child(heading(cards::block_label(block), 12.0, ink));
 }
 
 fn chip_group(
     parent: &mut ChildSpawnerCommands,
     title: &str,
+    ink: Color,
     blocks: Vec<Block>,
     unlocks: &Unlocks,
     character: Character,
 ) {
     parent.spawn(column(4.0)).with_children(|g| {
-        g.spawn(text(title, 11.0, color::MUTED));
+        g.spawn(heading(title, 12.0, ink));
         g.spawn(Node { flex_wrap: FlexWrap::Wrap, row_gap: px(4), column_gap: px(4), ..default() })
             .with_children(|wrap| {
                 for b in blocks {
@@ -467,7 +464,7 @@ fn palette(parent: &mut ChildSpawnerCommands, character: Character, unlocks: &Un
     conds.retain(usable);
     acts.retain(usable);
     parent.spawn(column(8.0)).with_children(|p| {
-        chip_group(p, "Conditions", conds, unlocks, character);
-        chip_group(p, "Actions", acts, unlocks, character);
+        chip_group(p, "Conditions", Color::srgb(0.173, 0.373, 0.478), conds, unlocks, character);
+        chip_group(p, "Actions", Color::srgb(0.541, 0.290, 0.063), acts, unlocks, character);
     });
 }

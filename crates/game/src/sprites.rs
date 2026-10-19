@@ -1,4 +1,4 @@
-//! Character sprites: 32x32 pixel art facing right, drawn at whole-number
+//! Character and monster sprites: 32x32 pixel art facing right, drawn at whole-number
 //! scales with nearest-neighbour sampling so the pixels stay crisp.
 //!
 //! The PNGs are embedded in the binary with `include_bytes!` rather than loaded
@@ -6,7 +6,7 @@
 //! means the web build needs no asset folder or URL handling under the GitHub
 //! Pages `/battler/` prefix.
 
-use battler_sim::{Character, UnitKind};
+use battler_sim::{Character, Monster, UnitKind};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
@@ -14,10 +14,12 @@ use bevy::prelude::*;
 /// The sprite's size in source pixels.
 pub const SPRITE_PX: f32 = 32.0;
 
-/// One image handle per character, indexed by `Character::index()`.
+/// One image handle per character (indexed by `Character::index()`) and per
+/// monster (in `Monster::ALL` order).
 #[derive(Resource)]
 pub struct Sprites {
     characters: Vec<Handle<Image>>,
+    monsters: Vec<Handle<Image>>,
 }
 
 impl Sprites {
@@ -25,9 +27,26 @@ impl Sprites {
         self.characters[c.index()].clone()
     }
 
-    /// The sprite for a battle unit; monsters have none yet.
-    pub fn unit(&self, kind: UnitKind) -> Option<Handle<Image>> {
-        kind.character().map(|c| self.character(c))
+    pub fn monster(&self, m: Monster) -> Handle<Image> {
+        let i = Monster::ALL.iter().position(|&x| x == m).expect("every monster is in ALL");
+        self.monsters[i].clone()
+    }
+
+    /// The sprite for any battle unit.
+    pub fn unit(&self, kind: UnitKind) -> Handle<Image> {
+        match kind {
+            UnitKind::Character(c) => self.character(c),
+            UnitKind::Monster(m) => self.monster(m),
+        }
+    }
+}
+
+/// How many screen pixels per sprite pixel a unit is drawn at in battle:
+/// bosses loom at 3x, everyone else 2x.
+pub fn battle_scale(kind: UnitKind) -> f32 {
+    match kind {
+        UnitKind::Monster(Monster::OgreChieftain | Monster::FrostWyrm | Monster::Lich) => 3.0,
+        _ => 2.0,
     }
 }
 
@@ -37,28 +56,29 @@ impl Sprites {
 impl FromWorld for Sprites {
     fn from_world(world: &mut World) -> Self {
         let mut images = world.resource_mut::<Assets<Image>>();
-        let characters = Character::ALL
-            .into_iter()
-            .map(|c| {
-                let image = Image::from_buffer(
-                    png_bytes(c),
-                    ImageType::Extension("png"),
-                    CompressedImageFormats::NONE,
-                    true,
-                    ImageSampler::nearest(),
-                    RenderAssetUsages::RENDER_WORLD,
-                )
-                .unwrap_or_else(|e| panic!("sprite for {c:?} is not a valid PNG: {e}"));
-                images.add(image)
-            })
-            .collect();
-        Self { characters }
+        // A closure that decodes one embedded PNG and stores it, returning its handle.
+        let mut load = |name: &str, bytes: &[u8]| {
+            let image = Image::from_buffer(
+                bytes,
+                ImageType::Extension("png"),
+                CompressedImageFormats::NONE,
+                true,
+                ImageSampler::nearest(),
+                RenderAssetUsages::RENDER_WORLD,
+            )
+            .unwrap_or_else(|e| panic!("sprite for {name} is not a valid PNG: {e}"));
+            images.add(image)
+        };
+        let characters =
+            Character::ALL.into_iter().map(|c| load(c.name(), character_png(c))).collect();
+        let monsters = Monster::ALL.into_iter().map(|m| load(m.name(), monster_png(m))).collect();
+        Self { characters, monsters }
     }
 }
 
 /// The embedded PNG for each character. The match is exhaustive, so adding a
 /// character without art is a compile error rather than a missing sprite.
-fn png_bytes(c: Character) -> &'static [u8] {
+fn character_png(c: Character) -> &'static [u8] {
     use Character::*;
     match c {
         BramGatewarden => include_bytes!("../assets/sprites/bram_gatewarden.png"),
@@ -79,6 +99,20 @@ fn png_bytes(c: Character) -> &'static [u8] {
         Grub => include_bytes!("../assets/sprites/grub_ironjaw.png"),
         Hilda => include_bytes!("../assets/sprites/hilda_bloodaxe.png"),
         Korgath => include_bytes!("../assets/sprites/korgath_the_undying.png"),
+    }
+}
+
+fn monster_png(m: Monster) -> &'static [u8] {
+    use Monster::*;
+    match m {
+        Slime => include_bytes!("../assets/sprites/monsters/slime.png"),
+        Wolf => include_bytes!("../assets/sprites/monsters/wolf.png"),
+        GoblinBrute => include_bytes!("../assets/sprites/monsters/goblin_brute.png"),
+        GoblinArcher => include_bytes!("../assets/sprites/monsters/goblin_archer.png"),
+        Skeleton => include_bytes!("../assets/sprites/monsters/skeleton.png"),
+        OgreChieftain => include_bytes!("../assets/sprites/monsters/ogre_chieftain.png"),
+        FrostWyrm => include_bytes!("../assets/sprites/monsters/frost_wyrm.png"),
+        Lich => include_bytes!("../assets/sprites/monsters/lich.png"),
     }
 }
 

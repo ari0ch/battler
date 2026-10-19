@@ -12,10 +12,13 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
 use crate::cards;
+use crate::kit;
 use crate::planning::spawn_pips;
-use crate::sprites::{Sprites, sprite_node};
+use crate::sprites::{SPRITE_PX, Sprites, battle_scale, sprite_node};
 use crate::state::{AppState, GameRun, LastReport, LobbyExt, Planning, Rev, RunPhase, Settings};
-use crate::ui::{self, SECONDARY, TOGGLED, UiAction, color, column, row, spawn_button, text};
+use crate::ui::{
+    self, SECONDARY, TOGGLED, UiAction, color, column, heading, row, spawn_button, text,
+};
 
 pub struct BattlePlugin;
 
@@ -32,6 +35,11 @@ impl Plugin for BattlePlugin {
             );
     }
 }
+
+// Card trace inks, chosen to read on parchment.
+const TRACE_BLUE: Color = Color::srgb(0.173, 0.373, 0.604);
+const TRACE_RED: Color = Color::srgb(0.557, 0.165, 0.165);
+const TRACE_FIRED: Color = Color::srgb(0.541, 0.290, 0.0);
 
 /// Real seconds per tick at 1x speed.
 const TICK_SECONDS: f32 = 0.5;
@@ -155,22 +163,25 @@ fn rebuild(
         // Header.
         stage
             .spawn((
-                Node { height: px(64), flex_shrink: 0.0, padding: UiRect::horizontal(px(24)), border: UiRect::bottom(px(1)), ..row(16.0) },
-                BackgroundColor(color::BAR),
-                BorderColor::all(color::LINE),
+                Node { height: px(64), flex_shrink: 0.0, padding: UiRect::new(px(16), px(16), px(0), px(6)), ..row(16.0) },
+                kit::tiled(kit::img::HEADER_WOOD, true, false),
             ))
             .with_children(|h| {
-                h.spawn(Node { width: px(250), ..column(2.0) }).with_children(|c| {
+                h.spawn((
+                    Node { width: px(250), height: px(46), flex_shrink: 0.0, justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..column(0.0) },
+                    kit::sliced(kit::img::BANNER, 6.0),
+                ))
+                .with_children(|c| {
                     let title = if pb.replay {
-                        format!("Replay - round {}", pb.setup.round)
+                        format!("REPLAY - ROUND {}", pb.setup.round)
                     } else {
-                        format!("Round {} - Battle", pb.setup.round)
+                        format!("ROUND {}", pb.setup.round)
                     };
-                    c.spawn(text(title, 20.0, color::TEXT));
-                    c.spawn(text(format!("vs {enemy_name}"), 13.0, color::RED_TEXT));
+                    c.spawn(heading(title, 18.0, color::TEXT));
+                    c.spawn(text(format!("vs {enemy_name}"), 11.0, color::TEXT));
                 });
                 h.spawn(Node { flex_grow: 1.0, justify_content: JustifyContent::Center, ..row(8.0) }).with_children(|c| {
-                    c.spawn((text(format!("Tick {}", battle.tick()), 16.0, color::MUTED), TickText, Node { width: px(80), ..default() }));
+                    c.spawn((heading(format!("Tick {}", battle.tick()), 16.0, color::MUTED), TickText, Node { width: px(80), ..default() }));
                     for s in [1, 2, 4] {
                         let style = if settings.speed == s { TOGGLED } else { SECONDARY };
                         spawn_button(c, &format!("{s}x"), UiAction::Speed(s), style, px(52), px(44));
@@ -184,8 +195,10 @@ fn rebuild(
                 });
                 h.spawn(Node { width: px(200), justify_content: JustifyContent::FlexEnd, ..row(22.0) }).with_children(|r| {
                     if let Some(run) = &run {
-                        r.spawn(text(format!("HP {}", run.0.me().hp()), 18.0, color::TEXT));
-                        r.spawn(text(format!("{} g", run.0.me().gold()), 18.0, color::GOLD_LIGHT));
+                        r.spawn(kit::icon(kit::img::ICON_HEART, 28.0));
+                        r.spawn(ui::outlined(run.0.me().hp().to_string(), 20.0, color::TEXT));
+                        r.spawn(kit::icon(kit::img::ICON_COIN, 28.0));
+                        r.spawn(ui::outlined(run.0.me().gold().to_string(), 20.0, color::GOLD_LIGHT));
                     }
                 });
             });
@@ -194,52 +207,55 @@ fn rebuild(
         stage
             .spawn(Node { flex_grow: 1.0, padding: UiRect::axes(px(24), px(10)), min_height: px(0), ..row(24.0) })
             .with_children(|body| {
-                body.spawn(Node { width: px(250), flex_shrink: 0.0, padding: UiRect::top(px(28)), ..column(16.0) })
+                body.spawn(ui::panel(Node { width: px(250), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, padding: UiRect::all(px(18)), ..column(14.0) }))
                     .with_children(|side| {
                         synergy_strip(side, battle, Team::Enemy, "Enemy synergies", color::RED_TEXT);
                         synergy_strip(side, battle, Team::Player, "Your synergies", color::BLUE_TEXT);
                         side.spawn(text(
                             "Badges: the card each unit ran. Letters: S shield, G guard, I immune, F frenzy, T taunted, Z frozen, M marked, V vanished.",
-                            11.0,
-                            color::FAINT,
+                            12.0,
+                            color::MUTED,
                         ));
+                        side.spawn(text("Blue shadows: your warband. Red: the enemy.", 12.0, color::MUTED));
                     });
                 body.spawn(Node { flex_grow: 1.0, justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..column(6.0) })
                     .with_children(|mid| {
                         mid.spawn(Node { width: px(BOARD_W), ..row(0.0) })
-                            .with_child(text(enemy_name.clone(), 13.0, color::RED_TEXT));
-                        mid.spawn((Node { width: px(BOARD_W), height: px(BOARD_H), ..default() }, BoardLayer))
+                            .with_child(heading(enemy_name.clone(), 14.0, color::RED_TEXT));
+                        // One open grass field: no tiles. A red tint marks the enemy
+                        // half and a dashed line the middle.
+                        mid.spawn((
+                            Node { width: px(BOARD_W), height: px(BOARD_H), overflow: Overflow::clip(), ..default() },
+                            kit::tiled(kit::img::FIELD_GRASS, true, true),
+                            Outline { width: px(4), offset: px(0), color: color::LINE_STRONG },
+                            BoardLayer,
+                        ))
                             .with_children(|board| {
-                                for x in 0..BOARD_DEPTH {
-                                    for y in 0..BOARD_LANES {
-                                        let p = Pos::new(x, y);
-                                        let fill = if x < BOARD_DEPTH / 2 { color::CELL } else { color::CELL_ENEMY };
-                                        board.spawn((
-                                            Node {
-                                                position_type: PositionType::Absolute,
-                                                left: px(cell_left(p)),
-                                                top: px(cell_top(p)),
-                                                width: px(CELL),
-                                                height: px(CELL),
-                                                border: UiRect::all(px(1)),
-                                                border_radius: BorderRadius::all(px(6)),
-                                                ..default()
-                                            },
-                                            BackgroundColor(fill),
-                                            BorderColor::all(color::LINE),
-                                        ));
-                                    }
+                                board.spawn((
+                                    Node { position_type: PositionType::Absolute, left: px(0), right: px(0), top: px(0), height: px(BOARD_H / 2.0), ..default() },
+                                    BackgroundColor(Color::srgba(0.235, 0.078, 0.118, 0.28)),
+                                    Pickable::IGNORE,
+                                ));
+                                let mid_y = BOARD_H / 2.0 - 1.0;
+                                let mut x = 4.0;
+                                while x < BOARD_W {
+                                    board.spawn((
+                                        Node { position_type: PositionType::Absolute, left: px(x), top: px(mid_y), width: px(10), height: px(2), ..default() },
+                                        BackgroundColor(Color::srgba(0.953, 0.902, 0.769, 0.35)),
+                                        Pickable::IGNORE,
+                                    ));
+                                    x += 20.0;
                                 }
                                 for unit in battle.units() {
                                     spawn_unit(board, unit, &sprites);
                                 }
                             });
                         mid.spawn(Node { width: px(BOARD_W), ..row(0.0) })
-                            .with_child(text("Your warband", 13.0, color::BLUE_TEXT));
+                            .with_child(heading("Your warband", 14.0, color::BLUE_TEXT));
                     });
                 if settings.card_trace {
                     body.spawn((
-                        ui::panel(Node { width: px(320), flex_shrink: 0.0, padding: UiRect::all(px(14)), overflow: Overflow::clip(), ..column(8.0) }),
+                        kit::parchment_panel(Node { width: px(310), flex_shrink: 0.0, padding: UiRect::all(px(18)), overflow: Overflow::clip(), ..column(8.0) }),
                         TracePanel,
                     ));
                 }
@@ -247,22 +263,19 @@ fn rebuild(
     });
 }
 
+/// A unit standing on the open field: a team-coloured shadow at its feet, the
+/// sprite (bosses bigger), a health bar over its head, and level pips and
+/// status letters at its feet. The outer node is the unit's cell; the sprite
+/// may overhang it.
 fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprites: &Sprites) {
     let player = unit.team == Team::Player;
-    let (fill, ring, ink) = if player {
-        (color::BLUE_FILL, color::BLUE, color::BLUE_TEXT)
+    let shadow = if player {
+        Color::srgba(0.314, 0.588, 1.0, 0.55)
     } else {
-        (color::RED_FILL, color::RED, color::RED_TEXT)
+        Color::srgba(0.878, 0.282, 0.282, 0.55)
     };
-    // An overlay pinned to one edge of the tile.
-    let overlay = |top: Option<f32>, bottom: Option<f32>, left: f32, right: f32| Node {
-        position_type: PositionType::Absolute,
-        top: top.map_or(Val::Auto, px),
-        bottom: bottom.map_or(Val::Auto, px),
-        left: px(left),
-        right: px(right),
-        ..default()
-    };
+    let size = SPRITE_PX * battle_scale(unit.kind);
+    let fill = if player { kit::img::FILL_HP } else { kit::img::FILL_ENEMY };
     board
         .spawn((
             UnitView(unit.id),
@@ -272,58 +285,85 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprite
                 top: px(cell_top(unit.pos)),
                 width: px(CELL),
                 height: px(CELL),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                border: UiRect::all(px(2)),
-                border_radius: BorderRadius::all(px(9)),
                 ..default()
             },
-            BackgroundColor(fill),
-            BorderColor::all(ring),
             ZIndex(1),
+            Pickable::IGNORE,
         ))
         .with_children(|v| {
-            // Player units face right; enemies are mirrored to face left.
-            match sprites.unit(unit.kind) {
-                Some(image) => {
-                    v.spawn(sprite_node(image, 2.0, !player));
-                }
-                None => {
-                    v.spawn(text(cards::initials(unit.kind), 17.0, ink));
-                }
-            }
+            // The shadow: an ellipse at the feet.
             v.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: px(-22),
-                    padding: UiRect::axes(px(6), px(2)),
-                    border_radius: BorderRadius::all(px(5)),
+                    left: px((CELL - size * 0.8) / 2.0),
+                    bottom: px(0),
+                    width: px(size * 0.8),
+                    height: px((size / 5.0).max(12.0)),
+                    border_radius: BorderRadius::all(percent(50)),
                     ..default()
                 },
-                BackgroundColor(color::SIG_FILL),
+                BackgroundColor(shadow),
+                Pickable::IGNORE,
+            ));
+            // The sprite, feet on the cell's bottom edge; enemies face left.
+            v.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px((CELL - size) / 2.0),
+                    bottom: px(4),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .with_child(sprite_node(
+                sprites.unit(unit.kind),
+                battle_scale(unit.kind),
+                !player,
+            ));
+            // The health bar over its head.
+            let bar_w = (size - 12.0).max(52.0);
+            v.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px((CELL - bar_w) / 2.0),
+                    bottom: px(size + 4.0),
+                    width: px(bar_w),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .with_children(|b| {
+                kit::spawn_bar(b, fill, 100.0, percent(100), 12.0, HpFill(unit.id));
+            });
+            // The badge naming the card that just ran: a purple tag over the bar,
+            // wider than the cell so long names fit.
+            v.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(-24),
+                    right: px(-24),
+                    bottom: px(size + 18.0),
+                    height: px(26),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                kit::sliced(kit::img::TAG_SIGNATURE, 4.0),
                 Visibility::Hidden,
                 Badge(unit.id),
                 ZIndex(3),
             ))
-            .with_child(text("", 11.0, color::SIG_TEXT));
+            .with_child(heading("", 12.0, color::SIG_TEXT));
+            // Pips and status letters at the feet.
             v.spawn((
                 Node {
-                    height: px(5),
-                    border_radius: BorderRadius::all(px(3)),
-                    overflow: Overflow::clip(),
-                    ..overlay(Some(2.0), None, 4.0, 4.0)
-                },
-                BackgroundColor(color::LINE),
-            ))
-            .with_child((
-                Node { width: percent(100), height: px(5), ..default() },
-                BackgroundColor(color::HP_FILL),
-                HpFill(unit.id),
-            ));
-            v.spawn((
-                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(4),
+                    right: px(4),
+                    bottom: px(-6),
                     justify_content: JustifyContent::SpaceBetween,
-                    ..overlay(None, Some(2.0), 4.0, 4.0)
+                    align_items: AlignItems::Center,
+                    ..default()
                 },
                 Pickable::IGNORE,
             ))
@@ -334,7 +374,7 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprite
                 } else {
                     foot.spawn(Node::default());
                 }
-                foot.spawn((text("", 10.0, color::GOLD_LIGHT), StatusLetters(unit.id)));
+                foot.spawn((ui::outlined("", 12.0, color::BLUE_TEXT), StatusLetters(unit.id)));
             });
         });
 }
@@ -490,7 +530,7 @@ fn spawn_floater(
             Floater { age: 0.0, base_top: top, color: c },
             Pickable::IGNORE,
         ))
-        .with_child(text(label, size, c));
+        .with_child(ui::outlined(label, size, c));
     });
 }
 
@@ -521,10 +561,7 @@ fn animate_floaters(
 fn animate_units(
     pb: Res<Playback>,
     mut views: Query<(&UnitView, &mut Node), (Without<HpFill>, Without<Badge>)>,
-    mut bars: Query<
-        (&HpFill, &mut Node, &mut BackgroundColor),
-        (Without<UnitView>, Without<Badge>),
-    >,
+    mut bars: Query<(&HpFill, &mut Node, &mut ImageNode), (Without<UnitView>, Without<Badge>)>,
     mut badges: Query<(&Badge, &mut Visibility, &Children), (Without<UnitView>, Without<HpFill>)>,
     mut letters: Query<(&StatusLetters, &mut Text)>,
     mut badge_text: Query<&mut Text, Without<StatusLetters>>,
@@ -548,11 +585,17 @@ fn animate_units(
         node.left = px(lerp(cell_left(from), cell_left(unit.pos)));
         node.top = px(lerp(cell_top(from), cell_top(unit.pos)));
     }
-    for (bar, mut node, mut bg) in &mut bars {
+    for (bar, mut node, mut image) in &mut bars {
         if let Some(unit) = battle.unit(bar.0) {
             let pct = unit.hp as f32 * 100.0 / unit.stats.max_hp as f32;
             node.width = percent(pct);
-            bg.0 = if pct < 35.0 { color::HP_LOW } else { color::HP_FILL };
+            // Your units' bars turn red when low; enemy bars are always red.
+            if unit.team == Team::Player {
+                let fill = if pct < 35.0 { kit::img::FILL_HP_LOW } else { kit::img::FILL_HP };
+                if image.image != fill {
+                    image.image = fill;
+                }
+            }
         }
     }
     for (l, mut text) in &mut letters {
@@ -625,16 +668,15 @@ fn refresh_trace(
     let pb = &*pb;
     commands.entity(panel).with_children(|p| {
         p.spawn((column(8.0), TraceContent)).with_children(|c| {
-            c.spawn(text(format!("Card trace - tick {}", pb.battle.tick()), 13.0, color::MUTED));
+            c.spawn(heading(format!("Card trace - tick {}", pb.battle.tick()), 14.0, color::INK));
             for unit in pb.battle.units().iter().filter(|u| u.is_alive()) {
-                let head =
-                    if unit.team == Team::Player { color::BLUE_TEXT } else { color::RED_TEXT };
+                let head = if unit.team == Team::Player { TRACE_BLUE } else { TRACE_RED };
                 c.spawn(column(2.0)).with_children(|u| {
                     let name = match unit.kind.character() {
                         Some(c) => format!("{} L{}", c.short_name(), unit.level.number()),
                         None => unit.kind.short_name().to_string(),
                     };
-                    u.spawn(text(name, 12.0, head));
+                    u.spawn(heading(name, 13.0, head));
                     let fired = pb.fired.get(&unit.id).copied();
                     let fired_at = match fired {
                         Some(CardRef::Node(n)) => Some(n),
@@ -643,16 +685,16 @@ fn refresh_trace(
                     };
                     for (i, node) in unit.program.nodes().iter().enumerate() {
                         let (prefix, ink) = match fired_at {
-                            Some(f) if f == i => (">", color::GOLD_LIGHT),
-                            Some(f) if i < f => ("-", color::FAINT),
-                            _ => (" ", color::MUTED),
+                            Some(f) if f == i => (">", TRACE_FIRED),
+                            Some(f) if i < f => ("-", color::INK_FAINT),
+                            _ => (" ", color::INK_MUTED),
                         };
                         u.spawn(text(format!("{prefix} {}", cards::card_label(node)), 11.0, ink));
                     }
                     let (prefix, ink) = if fired == Some(CardRef::Default) {
-                        (">", color::GOLD_LIGHT)
+                        (">", TRACE_FIRED)
                     } else {
-                        (" ", color::FAINT)
+                        (" ", color::INK_FAINT)
                     };
                     u.spawn(text(format!("{prefix} locked: attack nearest"), 11.0, ink));
                 });
@@ -671,38 +713,42 @@ fn synergy_strip(
 ) {
     let syn = battle.synergies(team);
     parent.spawn(column(6.0)).with_children(|side| {
-        side.spawn(text(label, 12.0, ink));
-        side.spawn(Node { flex_wrap: FlexWrap::Wrap, ..row(6.0) }).with_children(|chips| {
-            let mut any = false;
-            for class in Class::ALL {
-                let count = syn.count(class);
-                if count == 0 {
-                    continue;
+        side.spawn(heading(label, 14.0, ink));
+        side.spawn(Node { flex_wrap: FlexWrap::Wrap, row_gap: px(6), ..row(6.0) }).with_children(
+            |chips| {
+                let mut any = false;
+                for class in Class::ALL {
+                    let count = syn.count(class);
+                    if count == 0 {
+                        continue;
+                    }
+                    any = true;
+                    let (fill, line, ink) = if count >= 2 {
+                        (color::ACTIVE_FILL, color::ACTIVE_LINE, color::GOLD_LIGHT)
+                    } else {
+                        (Color::srgba(0.0, 0.0, 0.0, 0.2), Color::NONE, color::MUTED)
+                    };
+                    chips
+                        .spawn((
+                            Node {
+                                padding: UiRect::axes(px(6), px(3)),
+                                border: UiRect::all(px(2)),
+                                ..row(4.0)
+                            },
+                            BackgroundColor(fill),
+                            BorderColor::all(line),
+                            Hovered::default(),
+                            cards::synergy_tooltip(class, &syn),
+                        ))
+                        .with_children(|chip| {
+                            chip.spawn(kit::icon(kit::class_icon(class), 18.0));
+                            chip.spawn(heading(format!("{count} {}", class.plural()), 12.0, ink));
+                        });
                 }
-                any = true;
-                let (fill, line, ink) = if count >= 2 {
-                    (color::ACTIVE_FILL, color::ACTIVE_LINE, color::GOLD_LIGHT)
-                } else {
-                    (Color::NONE, color::LINE, color::FAINT)
-                };
-                chips
-                    .spawn((
-                        Node {
-                            padding: UiRect::axes(px(7), px(2)),
-                            border: UiRect::all(px(1)),
-                            border_radius: BorderRadius::all(px(6)),
-                            ..default()
-                        },
-                        BackgroundColor(fill),
-                        BorderColor::all(line),
-                        Hovered::default(),
-                        cards::synergy_tooltip(class, &syn),
-                    ))
-                    .with_child(text(format!("{count} {}", class.plural()), 12.0, ink));
-            }
-            if !any {
-                chips.spawn(text("none", 12.0, color::FAINT));
-            }
-        });
+                if !any {
+                    chips.spawn(text("none", 12.0, color::FAINT));
+                }
+            },
+        );
     });
 }

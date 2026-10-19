@@ -5,18 +5,12 @@
 use battler_sim::run::{Lobby, Opponent, RoundKind};
 use battler_sim::{
     Ability, Action, Character, Class, Condition, Level, Node, Program, Rarity, Requirement, Scope,
-    Signal, Synergies, Target, Threshold, UnitKind, Unlocks, palette_actions, palette_conditions,
+    Signal, Synergies, Target, Threshold, Unlocks, palette_actions, palette_conditions,
 };
 use bevy::prelude::Color;
 
 use crate::state::DraftCard;
 use crate::ui::{Block, Tooltip, color};
-
-/// Two letters for unit tiles until there's art.
-/// Two letters for a unit tile. Takes a character or a monster.
-pub fn initials(kind: impl Into<UnitKind>) -> String {
-    kind.into().short_name().chars().take(2).collect()
-}
 
 /// Who a round is against, for headers and the result screen.
 pub fn opponent_label(lobby: &Lobby, opponent: Opponent) -> String {
