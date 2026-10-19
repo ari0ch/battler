@@ -37,10 +37,29 @@ The skill lies in planning, and in reading why a plan went wrong.
   runs the first whose condition is true. Card order is part of the puzzle.
 - **Node count grows with unit level:** level 1 has 2 nodes, level 2 has 3, level 3 has 4.
 - **Programming happens in the planning phase** between battles. Rounds are time-limited.
+- **Blocks unlock as the player levels up.** A run starts with a small set of conditions and
+  actions; each player level introduces a few more, with a notification saying what's new.
+  This replaces "everything available from round 1", which playtesting found overwhelming.
+- **Every block has a hover tooltip** explaining exactly what it does and when it falls
+  through.
+- **The block list is being reassessed** (some current blocks are rarely useful). See the
+  proposal under Open questions; the reference tables below describe the current build.
 
 ### Units and board
 
-- **One copy of each unit type on the board.** Further copies sit inactive on the bench.
+- **Units are unique, individually named characters**, each belonging to one class.
+  The class sets the stat profile and counts towards class synergies; the **character**
+  brings its own signature block(s) and, at higher rarities, a passive.
+  (A role × origin grid was considered and rejected: named characters have more appeal,
+  and the steeper learning curve is worth it.)
+- **Rarity:** each class has characters at **3 rarities** (18 characters to start).
+  Higher rarities cost more, appear later (via player level, below) and are stronger.
+  Example: an early Common Knight brings Taunt; a later one brings Shield Wall or a self-heal.
+- **Class synergies hook into programming:** fielding several characters of a class unlocks
+  things for your programs (extra card slots, new blocks, stronger versions of blocks)
+  rather than only stat bonuses. Exact synergies to be designed with the roster.
+- **One copy of each character on the board** (two different Knights are fine).
+  Further copies sit inactive on the bench.
 - **Bench: 9 slots** (as in TFT), enough to work on several upgrades at once while still
   forcing choices.
 - **Levelling:** three copies merge into the next level (3 for level 2, 9 for level 3).
@@ -56,8 +75,9 @@ The skill lies in planning, and in reading why a plan went wrong.
   alive**, so a narrow loss hurts less than a wipe. A draw costs nothing.
   (TFT-like model chosen as a first pass; revisit after playtesting.)
 - **The run ends** at 0 HP (defeat) or after winning through round 15 (victory).
-- **Board size grows by round:** 3 units (rounds 1–2), 4 (3–5), 5 (6–9), 6 (10+).
-  Six is also the number of classes, which the one-per-type rule caps anyway.
+- **Player level** (TFT-style) replaces round-based board size. Level sets how many units
+  may be on the board, the shop's rarity odds, and which blocks are unlocked. XP comes
+  automatically each round and can be bought with gold. Numbers: see Open questions.
 - **Battlefield:** 8×5 grid. The player places units in the left four columns; the
   enemy board occupies the right four.
 
@@ -67,12 +87,16 @@ Main menu → **run loop** (Planning → Battle → Result, repeated each round)
 Run summary → Main menu.
 
 - **Main menu:** new run, how to play, settings.
-- **Planning (timed):** shop, bench, board placement, and the card editor. The enemy
-  board stays hidden until the battle starts.
-- **Card editor: a side drawer** over the right of the planning screen, so the board stays
-  visible. Hovering a block highlights its reach on the board (e.g. Taunt's 2 cells).
-  The shop is hidden while it's open; the timer keeps running.
+- **Planning (timed): one screen, no modes.** Board, bench, shop, synergy tracker and the
+  selected unit's program are all visible for the whole phase. Clicking a unit makes its
+  cards editable in place (no separate editor drawer; the drawer meant too many clicks and
+  hid the shop). Hovering a signature block highlights its reach on the board.
   60 seconds, or 75 once the player has 5+ units. A **Ready** button ends it early.
+  The enemy board stays hidden until the battle starts.
+- **Unit stats are a glance, not a panel:** one line in the program header, with full
+  details in a hover tooltip on any unit, bench slot or shop offer.
+- **Fewer clicks:** buying auto-places on the board when there's room; hotkeys D (reroll),
+  E (sell hovered unit), F (buy XP); card-count dots on unit tiles show unprogrammed units.
 - **Battle:** watch the fight, at 1×/2×/4× speed or skipped to the end. On-board numbers
   and card badges are always on; the **card trace panel** is an optional toggle,
   **off by default** so new players aren't overwhelmed.
@@ -85,10 +109,11 @@ Run summary → Main menu.
 All numbers in this section and the next are agreed starting points, to tune after playtesting.
 
 
-- 5 offers per round. **Buy 3 gold**, **reroll 2 gold**, **sell** for the purchase price
-  of the copies inside (3 per copy).
+- 5 offers per round. **Cost by rarity** (proposed 1 / 2 / 3 gold), **reroll 2 gold**,
+  **sell** for the purchase price of the copies inside. Rarity odds depend on player level.
 - **Bench: 9 slots.** Buying a third copy merges immediately, freeing slots.
-- **Shared pool:** about 12 copies of each class, drawn from the run's seeded RNG.
+- **Shared pool:** copies per character by rarity (proposed 12 / 10 / 8), drawn from the
+  run's seeded RNG.
 - **Programs persist between rounds.** Click any unit (board or bench) to edit its cards.
 
 ### Economy
@@ -148,10 +173,15 @@ In priority order:
 
 1. **More randomness?** Crits are implemented (see below). Dodges or damage ranges could
    follow if fights feel too predictable.
-2. **Traits/synergies.** Signals are currently open to every unit; they could become a
-   trait unlock later.
-3. **AI difficulty curve:** how quickly AI boards gain levels and units.
-4. **Art direction and sourcing** for pixel art.
+2. **AI difficulty curve:** how quickly AI boards gain levels and units.
+3. **Art direction and sourcing** for pixel art.
+4. **The roster:** 18 named characters (6 classes × 3 rarities), their signatures, passives
+   and stats. Under discussion.
+5. **Class synergies:** thresholds and programming hooks per class. Under discussion.
+6. **Block reassessment and unlock order:** which blocks to cut, merge or add, and which
+   player level introduces each. Under discussion.
+7. **Player level numbers:** XP per round, XP cost, level thresholds, board size and shop
+   odds per level. Under discussion.
 
 ## Rules (implemented in `battler-sim`)
 
@@ -244,6 +274,9 @@ Goal: prove the program → watch → analyse loop is fun, then add the shop.
   hand-designed enemy boards, a drag-and-drop editor (`bevy_egui` is the likely quick
   path), and a replay showing which card each unit is running.
 - **Phase 2 (first playable, in progress):** the run loop with all scenes, shop, bench,
-  merging, economy, timed rounds, the card editor drawer, battle readability (badges,
+  merging, economy, timed rounds, a card editor drawer, battle readability (badges,
   floating numbers, status letters, optional card trace) and post-game replays.
   Not yet: projectile/taunt lines, signal pulses, sound, art.
+- **Phase 3 (next):** one-screen planning layout, named characters with rarities, player
+  level and XP, progressive block unlocks with tooltips, programming-hook synergies,
+  and a headless balance harness.
