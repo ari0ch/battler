@@ -1,24 +1,33 @@
-//! The timed planning phase, all on one screen: header, synergy tracker, the
-//! next opponent, the player's half of the board and the bench, the selected
-//! unit's program (see `editor.rs`), the lobby standings, and the shop.
+//! The round screen, used for the whole run: planning and battle happen on the
+//! same battlefield, and each round's result pops up over the next planning
+//! phase while its timer is already running.
 //!
-//! The board is drawn rotated from sim coordinates, as in battle: lanes (`y`)
-//! run across the screen and the front row (`x = SIDE_DEPTH - 1`) is at the
-//! top, facing the enemy. Only the player's half is shown while planning.
+//! Layout: a wooden header (round, level, timer or battle controls, health,
+//! gold); synergy icons and the bench on the left; the battlefield in the
+//! middle with an arrow pointing at the enemy; the players on the right; the
+//! program panel lying over the right side (docked to a tab when closed); and
+//! the shop along the bottom. Details live in hover tooltips, not on screen.
+//!
+//! The board is drawn rotated from sim coordinates: lanes (`y`) run across the
+//! screen and depth (`x`) up it, the enemy half above yours.
 
 use battler_sim::run::economy::{BENCH_SIZE, BOARD_LANES, REROLL_COST, SIDE_DEPTH, XP_COST};
 use battler_sim::run::{Lobby, Location, OwnedUnit, Player, RoundKind};
-use battler_sim::{Class, Level, Pos, Wave};
+use battler_sim::{Class, Level, Pos};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::Button;
 
+use crate::battle::{
+    BOARD_H, BOARD_W, CELL, Playback, battle_controls, field_backdrop, spawn_battle_field,
+    spawn_trace_panel,
+};
 use crate::cards;
 use crate::editor::{self, HoveredAbility};
 use crate::kit;
-use crate::result::ordinal;
-use crate::sprites::{Sprites, sprite_node};
-use crate::state::{GameRun, LobbyExt, ME, Planning, Rev, RunPhase};
+use crate::result::{ResultCountdown, ordinal, spawn_result_popup};
+use crate::sprites::{SPRITE_PX, Sprites, battle_scale, sprite_node};
+use crate::state::{AppState, GameRun, LobbyExt, ME, Planning, Rev, RunPhase, Settings};
 use crate::ui::{
     self, ActionQueue, Clickable, DragSource, DropTarget, PRIMARY, SECONDARY, UiAction, color,
     column, heading, row, text,
@@ -28,29 +37,28 @@ pub struct PlanningPlugin;
 
 impl Plugin for PlanningPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(RunPhase::Planning), enter).add_systems(
-            Update,
-            (hotkeys, rebuild, tick_timers, update_cells)
-                .chain()
-                .run_if(in_state(RunPhase::Planning)),
-        );
+        app.add_systems(OnEnter(RunPhase::Planning), enter)
+            // The screen rebuilds in both phases: the battle plays on it.
+            .add_systems(Update, rebuild.run_if(in_state(AppState::InRun)))
+            .add_systems(
+                Update,
+                (hotkeys, tick_timers, update_cells)
+                    .chain()
+                    .after(rebuild)
+                    .run_if(in_state(RunPhase::Planning)),
+            );
     }
 }
 
-/// Dark red and green that read on parchment.
-const INK_RED: Color = Color::srgb(0.557, 0.165, 0.165);
+/// Dark green and gold that read on parchment.
 const INK_GREEN: Color = Color::srgb(0.180, 0.420, 0.180);
 const INK_GOLD: Color = Color::srgb(0.541, 0.353, 0.0);
 
-/// One board cell, grid line included.
-pub const CELL: f32 = 76.0;
-/// Grid line width, drawn on each cell's right and bottom edge.
+/// The header's and the shop's heights.
+const HEADER_H: f32 = 56.0;
+const SHOP_H: f32 = 104.0;
+/// Grid line width on your half of the field.
 const LINE: f32 = 2.0;
-/// The board's width on screen: one cell per lane.
-const BOARD_PX: f32 = CELL * BOARD_LANES as f32;
-/// Board tiles fit a 2x sprite (64 px) inside a 2 px border.
-const TILE: f32 = 68.0;
-const BENCH_TILE: f32 = 50.0;
 
 /// Seconds allowed for planning this round.
 pub fn planning_seconds(run: &Player) -> f32 {
@@ -83,7 +91,8 @@ struct NoticeBox;
 #[derive(Component)]
 struct CellView(Pos);
 
-/// D rerolls, F buys XP, E sells the unit under the pointer.
+/// D rerolls, F buys XP, E sells the unit under the pointer, Tab opens or
+/// docks the program panel.
 fn hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     mut queue: ResMut<ActionQueue>,
@@ -94,6 +103,9 @@ fn hotkeys(
     }
     if keys.just_pressed(KeyCode::KeyF) {
         queue.0.push(UiAction::BuyXp);
+    }
+    if keys.just_pressed(KeyCode::Tab) {
+        queue.0.push(UiAction::ToggleEditor);
     }
     if keys.just_pressed(KeyCode::KeyE) {
         let hovered = units.iter().find_map(|(src, h)| match src {
@@ -106,7 +118,7 @@ fn hotkeys(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn tick_timers(
     time: Res<Time<Real>>,
     run: Res<GameRun>,
@@ -116,6 +128,11 @@ fn tick_timers(
     mut timer_bar: Query<&mut Node, (With<TimerBar>, Without<NoticeBox>)>,
     mut toast_text: Query<&mut Text, (With<ToastText>, Without<TimerText>)>,
     mut notice: Query<&mut Node, (With<NoticeBox>, Without<TimerBar>)>,
+    mut countdown: Query<
+        &mut Text,
+        (With<ResultCountdown>, Without<TimerText>, Without<ToastText>),
+    >,
+    mut rev: ResMut<Rev>,
 ) {
     let dt = time.delta_secs();
     let before = planning.time_left;
@@ -143,6 +160,19 @@ fn tick_timers(
         if **t != message {
             **t = message.clone();
         }
+    }
+
+    // The round result pop-up counts down, then closes itself.
+    if let Some((_, left)) = planning.result.as_mut() {
+        *left -= dt;
+        let secs = left.max(0.0).ceil() as u32;
+        for mut t in &mut countdown {
+            **t = format!("OK ({secs})");
+        }
+    }
+    if planning.result.as_ref().is_some_and(|(_, left)| *left <= 0.0) {
+        planning.result = None;
+        rev.bump();
     }
 
     if let Some((_, left)) = planning.notice.as_mut() {
@@ -188,11 +218,15 @@ fn update_cells(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rebuild(
     mut commands: Commands,
     rev: Res<Rev>,
     run: Res<GameRun>,
     planning: Res<Planning>,
+    settings: Res<Settings>,
+    phase: Res<State<RunPhase>>,
+    playback: Option<Res<Playback>>,
     sprites: Res<Sprites>,
     roots: Query<Entity, With<PlanningRoot>>,
 ) {
@@ -204,46 +238,93 @@ fn rebuild(
     }
     let lobby = &run.0;
     let run = lobby.me();
-    let stage = ui::spawn_stage(
-        &mut commands,
-        (PlanningRoot, DespawnOnExit(RunPhase::Planning)),
-        color::BG,
-    );
+    // The battle plays on this screen's field, so it is the same screen for
+    // the whole run (despawned only when the run ends).
+    let battle = match (phase.get(), playback.as_deref()) {
+        (RunPhase::Battle, Some(pb)) => Some(pb),
+        _ => None,
+    };
+    let stage =
+        ui::spawn_stage(&mut commands, (PlanningRoot, DespawnOnExit(AppState::InRun)), color::BG);
     commands.entity(stage).with_children(|stage| {
-        header(stage, lobby, &planning);
-        stage
-            .spawn(Node {
-                flex_grow: 1.0,
-                min_height: px(0),
-                padding: UiRect::new(px(14), px(14), px(12), px(10)),
-                align_items: AlignItems::Stretch,
-                ..row(12.0)
-            })
-            .with_children(|body| {
-                synergy_column(body, run);
-                body.spawn(Node { width: px(BOARD_PX), flex_shrink: 0.0, ..column(8.0) })
-                    .with_children(|mid| {
-                        next_opponent(mid, lobby);
-                        board_section(mid, run, &planning, &sprites);
-                        bench_section(mid, run, &planning, &sprites);
-                    });
-                editor::spawn_program_panel(body, run, &planning, &sprites);
-                standings(body, lobby);
-            });
-        shop(stage, run, &sprites);
+        header(stage, lobby, &planning, battle.is_some(), &settings);
+        stage.spawn(Node { flex_grow: 1.0, min_height: px(0), ..default() }).with_children(
+            |body| {
+                // Left: synergies (icons only) and the bench.
+                body.spawn(Node {
+                    position_type: PositionType::Absolute,
+                    left: px(16),
+                    top: px(12),
+                    ..row(12.0)
+                })
+                .with_children(|left| {
+                    left.spawn(Node { align_items: AlignItems::FlexStart, ..row(0.0) })
+                        .with_children(|c| synergy_icons(c, run));
+                    bench_grid(left, run, &planning, &sprites);
+                });
+                // Centre: the battlefield, with an arrow pointing at the enemy.
+                body.spawn(Node {
+                    position_type: PositionType::Absolute,
+                    left: px((ui::STAGE_W - BOARD_W) / 2.0),
+                    top: px(2),
+                    align_items: AlignItems::Center,
+                    ..column(4.0)
+                })
+                .with_children(|mid| {
+                    up_arrow(mid, lobby, battle);
+                    match battle {
+                        Some(pb) => spawn_battle_field(mid, &pb.battle, &sprites),
+                        None => planning_field(mid, lobby, &planning, &sprites),
+                    }
+                });
+                // Right: the players.
+                body.spawn(Node {
+                    position_type: PositionType::Absolute,
+                    right: px(16),
+                    top: px(12),
+                    ..default()
+                })
+                .with_children(|right| standings(right, lobby));
+                // Overlays on the right: the program panel while planning, or
+                // the card trace during battle if it is turned on.
+                if battle.is_none() {
+                    program_overlay(body, run, &planning, &sprites);
+                } else if settings.card_trace {
+                    body.spawn(Node {
+                        position_type: PositionType::Absolute,
+                        right: px(0),
+                        top: px(0),
+                        bottom: px(0),
+                        width: px(320),
+                        ..default()
+                    })
+                    .with_children(spawn_trace_panel);
+                }
+            },
+        );
+        shop(stage, run, &sprites, battle.is_some());
         notice(stage, &planning);
+        if let (None, Some((report, _))) = (battle, &planning.result) {
+            spawn_result_popup(stage, lobby, report);
+        }
     });
 }
 
-fn header(stage: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Planning) {
+fn header(
+    stage: &mut ChildSpawnerCommands,
+    lobby: &Lobby,
+    planning: &Planning,
+    in_battle: bool,
+    settings: &Settings,
+) {
     let run = lobby.me();
     stage
         .spawn((
             Node {
-                height: px(64),
+                height: px(HEADER_H),
                 flex_shrink: 0.0,
                 padding: UiRect::new(px(16), px(16), px(0), px(6)),
-                ..row(20.0)
+                ..row(18.0)
             },
             kit::tiled(kit::img::HEADER_WOOD, true, false),
         ))
@@ -251,85 +332,94 @@ fn header(stage: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Planning) 
             // The round on a red ribbon.
             h.spawn((
                 Node {
-                    width: px(184),
-                    height: px(46),
+                    width: px(170),
+                    height: px(42),
                     flex_shrink: 0.0,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    ..column(0.0)
+                    ..default()
                 },
                 kit::sliced(kit::img::BANNER, 6.0),
+                Hovered::default(),
+                ui::Tooltip {
+                    title: format!("Round {}", lobby.round()),
+                    accent: color::GOLD_LIGHT,
+                    lines: vec![(cards::round_label(lobby.round_kind()), color::TEXT)],
+                },
             ))
-            .with_children(|c| {
-                c.spawn(heading(format!("ROUND {}", lobby.round()), 18.0, color::TEXT));
-                let kind = match lobby.round_kind() {
-                    RoundKind::Pve(w) if w.is_boss() => "Boss round",
-                    RoundKind::Pve(_) => "Monster round",
-                    RoundKind::Versus => "Versus",
-                };
-                c.spawn(text(kind, 11.0, color::TEXT));
-            });
-            h.spawn(row(10.0)).with_children(|lv| {
-                lv.spawn(kit::icon(kit::img::ICON_CROWN, 32.0));
-                lv.spawn(Node { width: px(150), ..column(4.0) }).with_children(|c| {
-                    let xp = match run.xp_needed() {
-                        Some(n) => format!("Level {} - XP {} / {n}", run.level(), run.xp()),
-                        None => format!("Level {} - max", run.level()),
-                    };
-                    c.spawn(heading(xp, 13.0, color::TEXT));
+            .with_child(heading(format!("ROUND {}", lobby.round()), 18.0, color::TEXT));
+            // Level and XP.
+            h.spawn(row(8.0)).with_children(|lv| {
+                lv.spawn(kit::icon(kit::img::ICON_CROWN, 30.0));
+                lv.spawn(Node { width: px(120), ..column(3.0) }).with_children(|c| {
+                    c.spawn(heading(format!("Level {}", run.level()), 14.0, color::TEXT));
                     let fill =
                         run.xp_needed().map_or(100.0, |n| 100.0 * run.xp() as f32 / n as f32);
-                    kit::spawn_bar(c, kit::img::FILL_XP, fill, percent(100), 16.0, ());
+                    kit::spawn_bar(c, kit::img::FILL_XP, fill, percent(100), 14.0, ());
                 });
-                lv.spawn(ui::button(
-                    UiAction::BuyXp,
-                    SECONDARY,
-                    Node { height: px(44), padding: UiRect::horizontal(px(12)), ..row(6.0) },
-                ))
-                .with_children(|b| {
-                    b.spawn(kit::icon(kit::img::ICON_STAR, 20.0));
-                    b.spawn(heading("Buy XP", 15.0, color::TEXT));
-                    b.spawn(kit::icon(kit::img::ICON_COIN, 18.0));
-                    b.spawn(heading(XP_COST.to_string(), 15.0, color::TEXT));
-                    b.spawn(text("F", 12.0, color::MUTED));
-                });
-            });
-            h.spawn(Node { flex_grow: 1.0, align_items: AlignItems::Center, ..column(4.0) })
-                .with_children(|c| {
-                    let secs = planning.time_left.ceil() as u32;
-                    c.spawn(row(8.0)).with_children(|r| {
-                        r.spawn(kit::icon(kit::img::ICON_HOURGLASS, 26.0));
-                        r.spawn((
-                            ui::outlined(
-                                format!("{}:{:02}", secs / 60, secs % 60),
-                                24.0,
-                                color::GOLD_LIGHT,
-                            ),
-                            TimerText,
-                        ));
+                if !in_battle {
+                    lv.spawn(ui::button(
+                        UiAction::BuyXp,
+                        SECONDARY,
+                        Node { height: px(42), padding: UiRect::horizontal(px(10)), ..row(5.0) },
+                    ))
+                    .insert(ui::Tooltip {
+                        title: "Buy XP (F)".to_string(),
+                        accent: color::BLUE_TEXT,
+                        lines: vec![(
+                            format!("{XP_COST} gold for {XP_COST} XP. Levels raise board size and shop odds."),
+                            color::TEXT,
+                        )],
+                    })
+                    .with_children(|b| {
+                        b.spawn(kit::icon(kit::img::ICON_STAR, 20.0));
+                        b.spawn(kit::icon(kit::img::ICON_COIN, 18.0));
+                        b.spawn(heading(XP_COST.to_string(), 15.0, color::TEXT));
                     });
-                    kit::spawn_bar(c, kit::img::FILL_TIME, 100.0, px(240), 14.0, TimerBar);
+                }
+            });
+            // The timer while planning; battle controls during battle.
+            h.spawn(Node {
+                flex_grow: 1.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..column(3.0)
+            })
+            .with_children(|c| {
+                if in_battle {
+                    battle_controls(c, settings, false);
+                    return;
+                }
+                let secs = planning.time_left.ceil() as u32;
+                c.spawn(row(8.0)).with_children(|r| {
+                    r.spawn(kit::icon(kit::img::ICON_HOURGLASS, 24.0));
+                    r.spawn((
+                        ui::outlined(format!("{}:{:02}", secs / 60, secs % 60), 22.0, color::GOLD_LIGHT),
+                        TimerText,
+                    ));
                 });
-            h.spawn(row(18.0)).with_children(|r| {
-                stat(r, kit::img::ICON_HEART, run.hp().to_string(), "health", color::TEXT);
-                stat(
-                    r,
-                    kit::img::ICON_COIN,
-                    run.gold().to_string(),
-                    &format!("+{} interest", run.interest_preview()),
-                    color::GOLD_LIGHT,
-                );
-                let (label, c) = match run.streak() {
-                    s if s >= 2 => (format!("{s} wins"), color::GOOD),
-                    s if s <= -2 => (format!("{} losses", -s), color::BAD),
-                    _ => ("no streak".to_string(), color::MUTED),
+                kit::spawn_bar(c, kit::img::FILL_TIME, 100.0, px(220), 12.0, TimerBar);
+            });
+            // Health and gold; details on hover.
+            h.spawn(row(16.0)).with_children(|r| {
+                stat(r, kit::img::ICON_HEART, run.hp().to_string(), color::TEXT, ui::Tooltip {
+                    title: "Health".to_string(),
+                    accent: color::BAD,
+                    lines: vec![("Lose a battle and you lose health. At 0 you are out.".to_string(), color::TEXT)],
+                });
+                let streak = match run.streak() {
+                    s if s >= 2 => format!("{s} wins in a row"),
+                    s if s <= -2 => format!("{} losses in a row", -s),
+                    _ => "No streak".to_string(),
                 };
-                r.spawn(Node { align_items: AlignItems::FlexEnd, ..column(2.0) }).with_children(
-                    |c2| {
-                        c2.spawn(heading(label, 15.0, c));
-                        c2.spawn(text("streak", 11.0, color::MUTED));
-                    },
-                );
+                stat(r, kit::img::ICON_COIN, run.gold().to_string(), color::GOLD_LIGHT, ui::Tooltip {
+                    title: "Gold".to_string(),
+                    accent: color::GOLD_LIGHT,
+                    lines: vec![
+                        (format!("+{} interest next round", run.interest_preview()), color::TEXT),
+                        (streak, color::TEXT),
+                    ],
+                });
             });
         });
     // The toast line floats just under the header.
@@ -337,32 +427,29 @@ fn header(stage: &mut ChildSpawnerCommands, lobby: &Lobby, planning: &Planning) 
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                top: px(70),
+                top: px(HEADER_H + 6.0),
                 left: px(0),
                 right: px(0),
                 justify_content: JustifyContent::Center,
                 ..default()
             },
             Pickable::IGNORE,
-            GlobalZIndex(50),
+            GlobalZIndex(90),
         ))
         .with_child((ui::outlined("", 16.0, color::BAD), ToastText));
 }
 
-/// An icon with a big number and a small caption under it.
+/// An icon and a big number, with a tooltip for the details.
 fn stat(
     parent: &mut ChildSpawnerCommands,
     icon: Handle<Image>,
     value: String,
-    caption: &str,
     value_color: Color,
+    tooltip: ui::Tooltip,
 ) {
-    parent.spawn(row(6.0)).with_children(|r| {
+    parent.spawn((row(6.0), Hovered::default(), tooltip)).with_children(|r| {
         r.spawn(kit::icon(icon, 28.0));
-        r.spawn(column(0.0)).with_children(|c| {
-            c.spawn(ui::outlined(value, 20.0, value_color));
-            c.spawn(text(caption, 11.0, color::MUTED));
-        });
+        r.spawn(ui::outlined(value, 20.0, value_color));
     });
 }
 
@@ -406,112 +493,6 @@ fn notice(stage: &mut ChildSpawnerCommands, planning: &Planning) {
                 }
                 c.spawn(text("Click to dismiss", 11.0, color::FAINT));
             });
-        });
-}
-
-/// The synergy tracker: each class on the board (and bench-only ones, faded).
-fn synergy_column(parent: &mut ChildSpawnerCommands, run: &Player) {
-    let synergies = run.synergies();
-    let on_bench: Vec<Class> = run.bench().iter().flatten().map(|u| u.class()).collect();
-    let mut classes: Vec<Class> = Class::ALL
-        .into_iter()
-        .filter(|&c| synergies.count(c) > 0 || on_bench.contains(&c))
-        .collect();
-    classes.sort_by_key(|&c| std::cmp::Reverse(synergies.count(c)));
-
-    parent
-        .spawn(ui::panel(Node { width: px(184), flex_shrink: 0.0, ..column(6.0) }))
-        .with_children(|col| {
-            col.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(0.0) })
-                .with_children(|h| {
-                    h.spawn(heading("Synergies", 15.0, color::GOLD_LIGHT));
-                    h.spawn(text(
-                        format!("{} active", synergies.active_count()),
-                        11.0,
-                        color::GOLD_LIGHT,
-                    ));
-                });
-            if classes.is_empty() {
-                col.spawn(text(
-                    "Field 2 units of a class to unlock its synergy.",
-                    11.0,
-                    color::FAINT,
-                ));
-            }
-            for class in classes {
-                let count = synergies.count(class);
-                let active = count >= 2;
-                let bench_only = count == 0;
-                let (fill, line, name_ink) = if active {
-                    (color::ACTIVE_FILL, color::ACTIVE_LINE, color::GOLD_LIGHT)
-                } else if bench_only {
-                    (Color::NONE, Color::NONE, color::FAINT)
-                } else {
-                    (Color::srgba(0.0, 0.0, 0.0, 0.2), Color::NONE, color::TEXT)
-                };
-                col.spawn((
-                    Node {
-                        padding: UiRect::axes(px(7), px(6)),
-                        border: UiRect::all(px(2)),
-                        ..column(4.0)
-                    },
-                    BackgroundColor(fill),
-                    BorderColor::all(line),
-                    Hovered::default(),
-                    cards::synergy_tooltip(class, &synergies),
-                ))
-                .with_children(|r| {
-                    r.spawn(row(8.0)).with_children(|top| {
-                        let (badge_fill, badge_ink) = if active {
-                            (color::GOLD, color::ON_GOLD)
-                        } else {
-                            (color::LINE_STRONG, name_ink)
-                        };
-                        top.spawn((
-                            Node {
-                                width: px(22),
-                                height: px(22),
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::Center,
-                                ..default()
-                            },
-                            BackgroundColor(badge_fill),
-                            Pickable::IGNORE,
-                        ))
-                        .with_child(heading(
-                            count.to_string(),
-                            13.0,
-                            badge_ink,
-                        ));
-                        top.spawn(kit::icon(kit::class_icon(class), 24.0));
-                        top.spawn((Node { flex_grow: 1.0, ..default() }, Pickable::IGNORE))
-                            .with_child(heading(class.plural(), 14.0, name_ink));
-                    });
-                    let effect = match count {
-                        3.. => {
-                            Some((cards::synergy_effect(class, 3).to_string(), color::GOLD_LIGHT))
-                        }
-                        2 => Some((
-                            format!(
-                                "{} Next: {}",
-                                cards::synergy_effect(class, 2),
-                                cards::synergy_effect(class, 3)
-                            ),
-                            color::GOLD_LIGHT,
-                        )),
-                        1 => Some((
-                            format!("1 more: {}", cards::synergy_effect(class, 2)),
-                            color::MUTED,
-                        )),
-                        _ => None,
-                    };
-                    if let Some((t, ink)) = effect {
-                        r.spawn(text(t, 11.0, ink));
-                    }
-                });
-            }
-            col.spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, Pickable::IGNORE))
-                .with_child(text("Only units on the board count.", 11.0, color::FAINT));
         });
 }
 
@@ -571,8 +552,8 @@ fn unit_tile(
 ) {
     let c = unit.character;
     let max = run.synergies().card_slots(c, unit.level);
-    // 2x on the board; 1x where tiles are small (the bench).
-    let scale = if size >= TILE { 2.0 } else { 1.0 };
+    // 2x when the tile fits it, otherwise 1x.
+    let scale = if size >= 64.0 { 2.0 } else { 1.0 };
     parent
         .spawn((
             Button,
@@ -621,94 +602,6 @@ fn unit_tile(
                 spawn_card_dots(foot, unit.program.len(), max);
             });
         });
-}
-
-/// A slim strip above the board: who or what the next battle is against.
-fn next_opponent(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
-    parent
-        .spawn((
-            Node { padding: UiRect::axes(px(18), px(12)), ..column(3.0) },
-            kit::sliced(kit::img::PANEL_PARCHMENT, 10.0),
-        ))
-        .with_children(|strip| match lobby.round_kind() {
-            RoundKind::Pve(wave) => wave_preview(strip, wave),
-            RoundKind::Versus => {
-                strip.spawn(row(8.0)).with_children(|r| {
-                    r.spawn(kit::icon(kit::img::ICON_SWORD, 22.0));
-                    r.spawn(heading("Next: versus", 15.0, INK_RED));
-                });
-                strip.spawn(text(
-                    format!(
-                        "{} players left. Your opponent is drawn when the battle starts.",
-                        lobby.alive_count()
-                    ),
-                    12.0,
-                    color::INK_MUTED,
-                ));
-            }
-        });
-}
-
-fn board_section(
-    parent: &mut ChildSpawnerCommands,
-    run: &Player,
-    planning: &Planning,
-    sprites: &Sprites,
-) {
-    parent.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(0.0) }).with_children(
-        |r| {
-            r.spawn(text(
-                format!("Your side - {} / {} placed", run.board().len(), run.board_limit()),
-                12.0,
-                color::MUTED,
-            ));
-            r.spawn(text("Front row (top) faces the enemy", 11.0, color::FAINT));
-        },
-    );
-    // One grass field under the whole half, framed in wood; the cells only draw
-    // grid lines over it.
-    parent
-        .spawn((
-            Node {
-                width: px(BOARD_PX),
-                border: UiRect::new(px(LINE), px(0), px(LINE), px(0)),
-                ..column(0.0)
-            },
-            kit::tiled(kit::img::FIELD_GRASS, true, true),
-            BorderColor::all(color::GRID),
-            Outline { width: px(4), offset: px(0), color: color::LINE_STRONG },
-        ))
-        .with_children(|board| player_half(board, run, planning, sprites));
-}
-
-/// What the monsters of a PvE round are, before the battle.
-fn wave_preview(parent: &mut ChildSpawnerCommands, wave: Wave) {
-    let ink = if wave.is_boss() { INK_RED } else { INK_GREEN };
-    let mut names: Vec<(&str, usize)> = Vec::new();
-    for (_, spec) in wave.units() {
-        let name = spec.kind.name();
-        match names.iter_mut().find(|(n, _)| *n == name) {
-            Some((_, count)) => *count += 1,
-            None => names.push((name, 1)),
-        }
-    }
-    let units: Vec<String> = names
-        .into_iter()
-        .map(|(name, count)| if count > 1 { format!("{count} x {name}") } else { name.to_string() })
-        .collect();
-    let kind = if wave.is_boss() { "Next: boss" } else { "Next: monsters" };
-    let icon = if wave.is_boss() { kit::img::ICON_SKULL } else { kit::img::ICON_SWORD };
-    parent.spawn(row(8.0)).with_children(|r| {
-        r.spawn(kit::icon(icon, 22.0));
-        r.spawn(heading(format!("{kind} - {}", wave.name()), 15.0, ink));
-        r.spawn(text(units.join(", "), 12.0, color::INK_MUTED));
-    });
-    let stakes = if wave.is_boss() {
-        "Win: gold. Lose: extra damage, rising each round."
-    } else {
-        "Win: a little gold. Lose: 2 HP."
-    };
-    parent.spawn(text(format!("{} {stakes}", wave.hint()), 12.0, color::INK_MUTED));
 }
 
 /// The lobby standings: a narrow sidebar, every player's health, best first.
@@ -773,102 +666,13 @@ fn standings(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
         });
 }
 
-/// The player's half of the board: one screen row per depth row, front row
-/// first, and one cell per lane across.
-fn player_half(
-    board: &mut ChildSpawnerCommands,
-    run: &Player,
-    planning: &Planning,
-    sprites: &Sprites,
-) {
-    for x in (0..SIDE_DEPTH).rev() {
-        board.spawn(row(0.0)).with_children(|cells| {
-            for y in 0..BOARD_LANES {
-                let pos = Pos::new(x, y);
-                // The first cell of each row is narrower by the board's left border.
-                let w = if y == 0 { CELL - LINE } else { CELL };
-                let cell_node = Node {
-                    width: px(w),
-                    height: px(CELL - if x == SIDE_DEPTH - 1 { LINE } else { 0.0 }),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    border: UiRect::new(px(0), px(LINE), px(0), px(LINE)),
-                    ..default()
-                };
-                cells
-                    .spawn((
-                        Button,
-                        Hovered::default(),
-                        Clickable(UiAction::ClickCell(pos)),
-                        DropTarget::Cell(pos),
-                        CellView(pos),
-                        cell_node,
-                        BackgroundColor(color::CELL),
-                        BorderColor::all(color::GRID),
-                    ))
-                    .with_children(|cell| {
-                        let loc = Location::Board(pos);
-                        if let Some(unit) = run.unit_at(loc) {
-                            let selected = planning.selected == Some(unit.id);
-                            unit_tile(cell, run, unit, loc, TILE, selected, sprites);
-                        }
-                    });
-            }
-        });
-    }
-}
-
-fn bench_section(
-    parent: &mut ChildSpawnerCommands,
-    run: &Player,
-    planning: &Planning,
-    sprites: &Sprites,
-) {
-    let used = run.bench().iter().flatten().count();
-    parent
-        .spawn(Node {
-            justify_content: JustifyContent::SpaceBetween,
-            margin: UiRect::top(px(4)),
-            ..row(0.0)
-        })
-        .with_children(|r| {
-            r.spawn(text(format!("Bench - {used} / {BENCH_SIZE}"), 12.0, color::MUTED));
-            r.spawn(text(
-                "Ring = rarity - dots = cards programmed - hover for stats",
-                11.0,
-                color::FAINT,
-            ));
-        });
-    parent.spawn(row(5.0)).with_children(|slots| {
-        let slot_w = (BOARD_PX - 5.0 * (BENCH_SIZE as f32 - 1.0)) / BENCH_SIZE as f32;
-        for i in 0..BENCH_SIZE {
-            slots
-                .spawn(ui::button(
-                    UiAction::ClickBench(i),
-                    ui::ButtonStyle::flat(Color::NONE, color::CELL_HOVER, Color::NONE),
-                    Node { width: px(slot_w), height: px(58), ..default() },
-                ))
-                // A carved wooden slot; the flat style only adds a hover glow.
-                .insert((DropTarget::Bench(i), kit::inset()))
-                .remove::<ui::HoverSkin>()
-                .with_children(|slot| {
-                    let loc = Location::Bench(i);
-                    if let Some(unit) = run.unit_at(loc) {
-                        let selected = planning.selected == Some(unit.id);
-                        unit_tile(slot, run, unit, loc, BENCH_TILE, selected, sprites);
-                    }
-                });
-        }
-    });
-}
-
-fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites) {
+fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites, in_battle: bool) {
     stage
         .spawn((
             Node {
-                height: px(112),
+                height: px(SHOP_H),
                 flex_shrink: 0.0,
-                padding: UiRect::new(px(16), px(16), px(8), px(4)),
+                padding: UiRect::new(px(16), px(16), px(6), px(4)),
                 ..row(10.0)
             },
             kit::tiled(kit::img::HEADER_WOOD, true, false),
@@ -882,7 +686,7 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites) {
                         flex_grow: 1.0,
                         flex_basis: px(0),
                         min_width: px(0),
-                        height: px(94),
+                        height: px(88),
                         padding: UiRect::axes(px(14), px(12)),
                         flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::SpaceBetween,
@@ -977,6 +781,12 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites) {
                 }
             });
             footer.spawn(Node { width: px(150), ..column(6.0) }).with_children(|col| {
+                if in_battle {
+                    // No buying during battle: the shop waits for the next round.
+                    col.spawn(Node { justify_content: JustifyContent::Center, ..row(0.0) })
+                        .with_child(ui::outlined("Battle!", 22.0, color::GOLD_LIGHT));
+                    return;
+                }
                 col.spawn(ui::button(
                     UiAction::Reroll,
                     SECONDARY,
@@ -1005,4 +815,284 @@ fn rarity_ink(r: battler_sim::Rarity) -> Color {
         battler_sim::Rarity::Rare => Color::srgb(0.157, 0.431, 0.588),
         battler_sim::Rarity::Epic => Color::srgb(0.463, 0.212, 0.639),
     }
+}
+
+/// One tile per class in play: its icon and count, gold-framed when the synergy
+/// is active, faded when the class is only on the bench. Words are in the tooltip.
+fn synergy_icons(parent: &mut ChildSpawnerCommands, run: &Player) {
+    let synergies = run.synergies();
+    let on_bench: Vec<Class> = run.bench().iter().flatten().map(|u| u.class()).collect();
+    let mut classes: Vec<Class> = Class::ALL
+        .into_iter()
+        .filter(|&c| synergies.count(c) > 0 || on_bench.contains(&c))
+        .collect();
+    classes.sort_by_key(|&c| std::cmp::Reverse(synergies.count(c)));
+    parent.spawn(column(6.0)).with_children(|col| {
+        for class in classes {
+            let count = synergies.count(class);
+            let (frame, tint) = match count {
+                2.. => (kit::img::FRAME_EPIC, Color::WHITE),
+                1 => (kit::img::FRAME_COMMON, Color::WHITE),
+                _ => (kit::img::FRAME_COMMON, Color::srgba(1.0, 1.0, 1.0, 0.45)),
+            };
+            col.spawn((
+                Node {
+                    width: px(52),
+                    height: px(52),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                kit::sliced(frame, 6.0).with_color(tint),
+                BackgroundColor(if count >= 2 {
+                    color::ACTIVE_FILL
+                } else {
+                    Color::srgba(0.0, 0.0, 0.0, 0.25)
+                }),
+                Hovered::default(),
+                cards::synergy_tooltip(class, &synergies),
+            ))
+            .with_children(|tile| {
+                tile.spawn((
+                    ImageNode::new(kit::class_icon(class)).with_color(tint),
+                    Node { width: px(28), height: px(28), ..default() },
+                    Pickable::IGNORE,
+                ));
+                tile.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        right: px(3),
+                        bottom: px(0),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_child(ui::outlined(
+                    count.to_string(),
+                    15.0,
+                    if count >= 2 { color::GOLD_LIGHT } else { color::TEXT },
+                ));
+            });
+        }
+    });
+}
+
+/// The bench as a 3 x 3 grid of carved slots.
+fn bench_grid(
+    parent: &mut ChildSpawnerCommands,
+    run: &Player,
+    planning: &Planning,
+    sprites: &Sprites,
+) {
+    parent
+        .spawn(Node {
+            display: Display::Grid,
+            grid_template_columns: RepeatedGridTrack::px(3, CELL),
+            row_gap: px(6),
+            column_gap: px(6),
+            ..default()
+        })
+        .with_children(|grid| {
+            for i in 0..BENCH_SIZE {
+                grid.spawn(ui::button(
+                    UiAction::ClickBench(i),
+                    ui::ButtonStyle::flat(Color::NONE, color::CELL_HOVER, Color::NONE),
+                    Node { width: px(CELL), height: px(CELL), ..default() },
+                ))
+                // A carved wooden slot; the flat style only adds a hover glow.
+                .insert((DropTarget::Bench(i), kit::inset()))
+                .remove::<ui::HoverSkin>()
+                .with_children(|slot| {
+                    let loc = Location::Bench(i);
+                    if let Some(unit) = run.unit_at(loc) {
+                        let selected = planning.selected == Some(unit.id);
+                        unit_tile(slot, run, unit, loc, CELL, selected, sprites);
+                    }
+                });
+            }
+        });
+}
+
+/// An arrow above the field pointing at the enemy side; hover for who it is.
+fn up_arrow(parent: &mut ChildSpawnerCommands, lobby: &Lobby, battle: Option<&Playback>) {
+    let (title, lines) = match battle.and_then(|pb| pb.opponent) {
+        Some(o) => (format!("vs {}", cards::opponent_label(lobby, o)), vec![]),
+        None => match lobby.round_kind() {
+            RoundKind::Pve(w) => {
+                (format!("Next: {}", w.name()), vec![(w.hint().to_string(), color::TEXT)])
+            }
+            RoundKind::Versus => (
+                "Next: versus".to_string(),
+                vec![("Your opponent appears when the battle starts.".to_string(), color::TEXT)],
+            ),
+        },
+    };
+    parent.spawn((
+        ImageNode::new(kit::img::ICON_ARROW_UP),
+        Node { width: px(24), height: px(24), ..default() },
+        Hovered::default(),
+        ui::Tooltip { title, accent: color::RED_TEXT, lines },
+    ));
+}
+
+/// The battlefield while planning: the same grass field as in battle, with
+/// grid lines over your half and a preview of the next opponent in theirs.
+fn planning_field(
+    parent: &mut ChildSpawnerCommands,
+    lobby: &Lobby,
+    planning: &Planning,
+    sprites: &Sprites,
+) {
+    let run = lobby.me();
+    parent
+        .spawn((
+            Node { width: px(BOARD_W), height: px(BOARD_H), flex_shrink: 0.0, ..default() },
+            kit::tiled(kit::img::FIELD_GRASS, true, true),
+            Outline { width: px(4), offset: px(0), color: color::LINE_STRONG },
+        ))
+        .with_children(|field| {
+            field_backdrop(field);
+            enemy_preview(field, lobby, sprites);
+            // Your half: rows of droppable cells, front row first.
+            field
+                .spawn(Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    top: px(BOARD_H / 2.0),
+                    ..column(0.0)
+                })
+                .with_children(|half| {
+                    for x in (0..SIDE_DEPTH).rev() {
+                        half.spawn(row(0.0)).with_children(|cells| {
+                            for y in 0..BOARD_LANES {
+                                let pos = Pos::new(x, y);
+                                cells
+                                    .spawn((
+                                        Button,
+                                        Hovered::default(),
+                                        Clickable(UiAction::ClickCell(pos)),
+                                        DropTarget::Cell(pos),
+                                        CellView(pos),
+                                        Node {
+                                            width: px(CELL),
+                                            height: px(CELL),
+                                            align_items: AlignItems::Center,
+                                            justify_content: JustifyContent::Center,
+                                            border: UiRect::new(
+                                                px(if y == 0 { 0.0 } else { LINE / 2.0 }),
+                                                px(LINE / 2.0),
+                                                px(LINE / 2.0),
+                                                px(LINE / 2.0),
+                                            ),
+                                            ..default()
+                                        },
+                                        BackgroundColor(color::CELL),
+                                        BorderColor::all(color::GRID),
+                                    ))
+                                    .with_children(|cell| {
+                                        let loc = Location::Board(pos);
+                                        if let Some(unit) = run.unit_at(loc) {
+                                            let selected = planning.selected == Some(unit.id);
+                                            unit_tile(
+                                                cell, run, unit, loc, CELL, selected, sprites,
+                                            );
+                                        }
+                                    });
+                            }
+                        });
+                    }
+                });
+        });
+}
+
+/// The next opponent in the enemy half: a PvE wave stands where it will fight,
+/// slightly faded; a versus round just says so.
+fn enemy_preview(field: &mut ChildSpawnerCommands, lobby: &Lobby, sprites: &Sprites) {
+    match lobby.round_kind() {
+        RoundKind::Pve(wave) => {
+            for (pos, spec) in wave.units() {
+                // Wave positions are written as if for the left side; the
+                // battle mirrors them, which puts row `x` at screen row `x`.
+                let scale = battle_scale(spec.kind);
+                let size = SPRITE_PX * scale;
+                let left = pos.y as f32 * CELL + (CELL - size) / 2.0;
+                let top = (pos.x as f32 + 1.0) * CELL - size - 4.0;
+                field.spawn((
+                    ImageNode {
+                        image: sprites.unit(spec.kind),
+                        flip_x: true,
+                        color: Color::srgba(1.0, 1.0, 1.0, 0.85),
+                        ..default()
+                    },
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(left),
+                        top: px(top),
+                        width: px(size),
+                        height: px(size),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ));
+            }
+        }
+        RoundKind::Versus => {
+            field
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0),
+                        right: px(0),
+                        top: px(BOARD_H / 4.0 - 12.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_child(ui::outlined("Versus", 22.0, color::RED_TEXT));
+        }
+    }
+}
+
+/// The program panel: open, it lies over the right of the screen; docked, only
+/// a tab at the edge shows. Selecting a unit opens it; the battle docks it.
+fn program_overlay(
+    body: &mut ChildSpawnerCommands,
+    run: &Player,
+    planning: &Planning,
+    sprites: &Sprites,
+) {
+    let open = planning.editor_open;
+    body.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(0),
+            top: px(0),
+            bottom: px(0),
+            align_items: AlignItems::Center,
+            ..row(0.0)
+        },
+        GlobalZIndex(40),
+    ))
+    .with_children(|o| {
+        o.spawn(ui::button(
+            UiAction::ToggleEditor,
+            SECONDARY,
+            Node { width: px(34), height: px(110), flex_shrink: 0.0, ..column(4.0) },
+        ))
+        .insert(ui::Tooltip {
+            title: if open { "Dock the program (Tab)" } else { "Open the program (Tab)" }
+                .to_string(),
+            accent: color::GOLD_LIGHT,
+            lines: vec![],
+        })
+        .with_children(|tab| {
+            tab.spawn(heading(if open { ">" } else { "<" }, 18.0, color::TEXT));
+            tab.spawn(kit::icon(kit::img::ICON_STAFF, 20.0));
+        });
+        if open {
+            o.spawn(Node { width: px(420), height: percent(100), ..default() })
+                .with_children(|p| editor::spawn_program_panel(p, run, planning, sprites));
+        }
+    });
 }

@@ -1,69 +1,39 @@
-//! The round result screen, and game over with the run summary.
+//! The round result pop-up (shown over the planning screen), and game over with
+//! the run summary.
 
 use battler_sim::run::economy::{BOSS_EXTRA_DAMAGE, LOBBY_SIZE, round_damage};
-use battler_sim::run::{Lobby, Opponent, RoundReport, RunStatus, round_kind};
+use battler_sim::run::{Lobby, Opponent, RoundReport, RunStatus};
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
 use crate::cards;
+use crate::kit;
 use crate::planning::spawn_pips;
 use crate::sprites::{Sprites, sprite_node};
-use crate::state::{AppState, GameRun, LastReport, LobbyExt, Rev, RunPhase};
+use crate::state::{AppState, GameRun, LobbyExt, Rev};
 use crate::ui::{
-    self, ActionQueue, PRIMARY, SECONDARY, UiAction, color, column, row, spawn_button, text,
+    self, PRIMARY, SECONDARY, UiAction, color, column, heading, row, spawn_button, text,
 };
 
 pub struct ResultPlugin;
 
 impl Plugin for ResultPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<AutoContinue>()
-            .add_systems(OnEnter(RunPhase::Result), enter_result)
-            .add_systems(
-                Update,
-                (rebuild_result, count_down).chain().run_if(in_state(RunPhase::Result)),
-            )
-            .add_systems(OnEnter(AppState::GameOver), |mut rev: ResMut<Rev>| rev.bump())
+        app.add_systems(OnEnter(AppState::GameOver), |mut rev: ResMut<Rev>| rev.bump())
             .add_systems(Update, rebuild_game_over.run_if(in_state(AppState::GameOver)));
     }
 }
 
-/// Seconds before the result screen moves on by itself.
-const AUTO_CONTINUE: f32 = 10.0;
-
-#[derive(Resource, Default)]
-struct AutoContinue(f32);
-
-#[derive(Component)]
-struct ResultRoot;
-#[derive(Component)]
-struct ContinueLabel;
 #[derive(Component)]
 struct GameOverRoot;
 
-fn enter_result(mut rev: ResMut<Rev>, mut auto: ResMut<AutoContinue>) {
-    auto.0 = AUTO_CONTINUE;
-    rev.bump();
-}
-
-fn count_down(
-    time: Res<Time<Real>>,
-    mut auto: ResMut<AutoContinue>,
-    mut queue: ResMut<ActionQueue>,
-    mut labels: Query<&mut Text, With<ContinueLabel>>,
-) {
-    let before = auto.0;
-    auto.0 -= time.delta_secs();
-    if before > 0.0 && auto.0 <= 0.0 {
-        queue.0.push(UiAction::Continue);
-    }
-    for mut t in &mut labels {
-        **t = format!("Continue - {}", auto.0.max(0.0).ceil() as u32);
-    }
-}
+/// The round's result pop-up's countdown label, updated in place.
+#[derive(Component)]
+pub struct ResultCountdown;
 
 fn outcome_words(report: &RoundReport) -> (&'static str, Color) {
     match report.result {
-        Some(true) => ("Victory", color::GOOD),
+        Some(true) => ("Victory!", color::GOOD),
         Some(false) => ("Defeat", color::BAD),
         None => ("Draw", color::MUTED),
     }
@@ -89,15 +59,15 @@ fn damage_note(r: &RoundReport) -> String {
         }
         (_, 0) => "No damage taken.".to_string(),
         (Opponent::Monsters(w), d) if w.is_boss() => format!(
-            "Lost {d} HP: {} for round {} + {BOSS_EXTRA_DAMAGE} for a boss.",
+            "-{d} HP: {} for round {} + {BOSS_EXTRA_DAMAGE} for a boss",
             round_damage(r.round),
             r.round
         ),
-        (Opponent::Monsters(_), d) => format!("Lost {d} HP to the monsters."),
+        (Opponent::Monsters(_), d) => format!("-{d} HP to the monsters"),
         (_, d) => {
             let base = round_damage(r.round);
             format!(
-                "Lost {d} HP: {base} for round {} + {} for surviving enemy levels.",
+                "-{d} HP: {base} for round {} + {} for surviving enemies",
                 r.round,
                 d.saturating_sub(base)
             )
@@ -105,180 +75,97 @@ fn damage_note(r: &RoundReport) -> String {
     }
 }
 
-fn rebuild_result(
-    mut commands: Commands,
-    rev: Res<Rev>,
-    report: Option<Res<LastReport>>,
-    run: Option<Res<GameRun>>,
-    roots: Query<Entity, With<ResultRoot>>,
-) {
-    if !rev.is_changed() {
-        return;
-    }
-    let (Some(report), Some(run)) = (report, run) else { return };
-    let r = &report.0;
-    let lobby: &Lobby = &run.0;
-    for e in &roots {
-        commands.entity(e).despawn();
-    }
-    let stage = ui::spawn_stage(
-        &mut commands,
-        (ResultRoot, DespawnOnExit(RunPhase::Result)),
-        color::BG_DEEP,
-    );
-    commands.entity(stage).insert(Node {
-        width: px(ui::STAGE_W),
-        height: px(ui::STAGE_H),
-        align_items: AlignItems::Center,
-        justify_content: JustifyContent::Center,
-        ..default()
-    });
-    commands.entity(stage).with_children(|stage| {
-        stage
-            .spawn(ui::panel(Node {
-                width: px(760),
-                padding: UiRect::axes(px(48), px(40)),
-                ..column(28.0)
-            }))
-            .with_children(|card| {
-                let (headline, ink) = outcome_words(r);
-                card.spawn(Node { align_items: AlignItems::Center, ..column(8.0) }).with_children(
-                    |c| {
-                        c.spawn(text(format!("Round {}", r.round), 14.0, color::MUTED));
-                        c.spawn(text(headline, 56.0, ink));
-                        let ticks = if r.ticks == 1 { "tick" } else { "ticks" };
-                        c.spawn(text(
-                            format!(
-                                "vs {} - {} of your units survived - {} {ticks}",
-                                cards::opponent_label(lobby, r.opponent),
-                                r.player_survivors,
-                                r.ticks
-                            ),
-                            16.0,
-                            color::MUTED,
-                        ));
-                    },
-                );
-
-                card.spawn(row(20.0)).with_children(|cols| {
-                    cols.spawn((
-                        Node {
-                            flex_grow: 1.0,
-                            flex_basis: px(0),
-                            padding: UiRect::all(px(18)),
-                            align_self: AlignSelf::Stretch,
-                            border_radius: BorderRadius::all(px(12)),
-                            ..column(12.0)
-                        },
-                        BackgroundColor(color::PANEL_2),
-                    ))
-                    .with_children(|hp| {
-                        hp.spawn(text("Health", 13.0, color::MUTED));
-                        hp.spawn(text(format!("{} / 100", r.hp_after), 32.0, color::TEXT));
-                        hp.spawn((
-                            Node {
-                                height: px(8),
-                                border_radius: BorderRadius::all(px(4)),
-                                overflow: Overflow::clip(),
-                                ..default()
-                            },
-                            BackgroundColor(color::LINE),
-                        ))
-                        .with_child((
-                            Node { width: percent(r.hp_after as f32), height: px(8), ..default() },
-                            BackgroundColor(color::HP_FILL),
-                        ));
-                        hp.spawn(text(damage_note(r), 13.0, color::FAINT));
-                    });
-
-                    cols.spawn((
-                        Node {
-                            flex_grow: 1.0,
-                            flex_basis: px(0),
-                            padding: UiRect::all(px(18)),
-                            border_radius: BorderRadius::all(px(12)),
-                            ..column(8.0)
-                        },
-                        BackgroundColor(color::PANEL_2),
-                    ))
-                    .with_children(|g| {
-                        g.spawn(text("Gold for next round", 13.0, color::MUTED));
-                        let streak = if r.streak >= 0 {
-                            format!("Streak ({} wins)", r.streak)
-                        } else {
-                            format!("Streak ({} losses)", -r.streak)
-                        };
-                        let lines = [
-                            ("Banked".to_string(), r.banked.to_string()),
-                            ("Base".to_string(), format!("+{}", r.income.base)),
-                            (
-                                if r.opponent.is_pve() { "Reward" } else { "Win" }.to_string(),
-                                format!("+{}", r.income.win),
-                            ),
-                            (
-                                format!("Interest ({} banked)", r.banked),
-                                format!("+{}", r.income.interest),
-                            ),
-                            (streak, format!("+{}", r.income.streak)),
-                        ];
-                        for (label, value) in lines {
-                            g.spawn(Node {
-                                justify_content: JustifyContent::SpaceBetween,
-                                ..row(0.0)
-                            })
-                            .with_children(|l| {
-                                l.spawn(text(label, 15.0, color::MUTED));
-                                l.spawn(text(value, 15.0, color::GOLD_LIGHT));
-                            });
-                        }
-                        g.spawn((
-                            Node { height: px(1), margin: UiRect::vertical(px(4)), ..default() },
-                            BackgroundColor(color::LINE_STRONG),
-                        ));
-                        g.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(0.0) })
-                            .with_children(|l| {
-                                l.spawn(text("Total", 17.0, color::TEXT));
-                                l.spawn(text(
-                                    format!("{} g", r.gold_after),
-                                    17.0,
+/// The last round's result as a small pop-up over the planning screen, so the
+/// next planning timer can already be running underneath it. Hover the gold
+/// line for the breakdown.
+pub fn spawn_result_popup(stage: &mut ChildSpawnerCommands, lobby: &Lobby, r: &RoundReport) {
+    stage
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                right: px(0),
+                top: px(150),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            GlobalZIndex(80),
+            Pickable::IGNORE,
+        ))
+        .with_children(|centre| {
+            centre
+                .spawn(ui::panel(Node {
+                    width: px(420),
+                    padding: UiRect::axes(px(30), px(24)),
+                    align_items: AlignItems::Center,
+                    ..column(10.0)
+                }))
+                .with_children(|card| {
+                    let (headline, ink) = outcome_words(r);
+                    card.spawn(text(
+                        format!(
+                            "Round {} - vs {}",
+                            r.round,
+                            cards::opponent_label(lobby, r.opponent)
+                        ),
+                        13.0,
+                        color::MUTED,
+                    ));
+                    card.spawn(ui::outlined(headline, 40.0, ink));
+                    card.spawn(row(18.0)).with_children(|line| {
+                        line.spawn(row(6.0)).with_children(|hp| {
+                            hp.spawn(kit::icon(kit::img::ICON_HEART, 24.0));
+                            hp.spawn(heading(r.hp_after.to_string(), 18.0, color::TEXT));
+                        });
+                        line.spawn((row(6.0), Hovered::default(), gold_tooltip(r))).with_children(
+                            |g| {
+                                g.spawn(kit::icon(kit::img::ICON_COIN, 24.0));
+                                g.spawn(heading(
+                                    format!("{} (+{})", r.gold_after, r.income.total()),
+                                    18.0,
                                     color::GOLD_LIGHT,
                                 ));
-                            });
+                            },
+                        );
                     });
+                    card.spawn(text(damage_note(r), 13.0, color::MUTED));
+                    if let Some(level) = r.level_ups.last() {
+                        card.spawn(heading(format!("Level {level}!"), 15.0, color::GOLD_LIGHT));
+                    }
+                    card.spawn(ui::button(
+                        UiAction::Continue,
+                        PRIMARY,
+                        Node {
+                            width: px(160),
+                            height: px(44),
+                            margin: UiRect::top(px(4)),
+                            ..default()
+                        },
+                    ))
+                    .with_child((heading("OK", 16.0, color::ON_GOLD), ResultCountdown));
                 });
+        });
+}
 
-                card.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..row(20.0) })
-                    .with_children(|f| {
-                        let next = match r.placement {
-                            Some(1) => "You are the last one standing!".to_string(),
-                            Some(n) => {
-                                format!("Knocked out - you placed {} of {LOBBY_SIZE}.", ordinal(n))
-                            }
-                            None => {
-                                let kind = cards::round_label(round_kind(r.round + 1));
-                                let left = lobby.alive_count();
-                                match r.level_ups.last() {
-                                    Some(level) => format!(
-                                        "Next: round {} ({kind}) - you reached level {level}!",
-                                        r.round + 1
-                                    ),
-                                    None => format!(
-                                        "Next: round {} ({kind}) - {left} players left",
-                                        r.round + 1
-                                    ),
-                                }
-                            }
-                        };
-                        f.spawn(text(next, 14.0, color::MUTED));
-                        f.spawn(ui::button(
-                            UiAction::Continue,
-                            PRIMARY,
-                            Node { width: px(190), height: px(52), ..default() },
-                        ))
-                        .with_child((text("Continue", 16.0, color::ON_GOLD), ContinueLabel));
-                    });
-            });
-    });
+/// The gold breakdown, on hover.
+fn gold_tooltip(r: &RoundReport) -> ui::Tooltip {
+    let streak = if r.streak >= 0 { "wins" } else { "losses" };
+    let reward = if r.opponent.is_pve() { "Reward" } else { "Win" };
+    ui::Tooltip {
+        title: "Gold for next round".to_string(),
+        accent: color::GOLD_LIGHT,
+        lines: vec![
+            (format!("Banked {}", r.banked), color::TEXT),
+            (format!("Base +{}", r.income.base), color::TEXT),
+            (format!("{reward} +{}", r.income.win), color::TEXT),
+            (format!("Interest +{}", r.income.interest), color::TEXT),
+            (
+                format!("Streak ({} {streak}) +{}", r.streak.unsigned_abs(), r.income.streak),
+                color::TEXT,
+            ),
+            (format!("Total {} gold", r.gold_after), color::GOLD_LIGHT),
+        ],
+    }
 }
 
 fn rebuild_game_over(

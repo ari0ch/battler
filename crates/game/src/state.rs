@@ -15,14 +15,15 @@ pub enum AppState {
     Replay,
 }
 
-/// The round loop, which only exists while a run is in progress.
+/// The round loop, which only exists while a run is in progress. Both phases
+/// share one screen: the battle plays on the planning screen's field, and the
+/// round's result is a pop-up over the next planning phase.
 #[derive(SubStates, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[source(AppState = AppState::InRun)]
 pub enum RunPhase {
     #[default]
     Planning,
     Battle,
-    Result,
 }
 
 /// The lobby in progress (kept through game over for the summary). The human
@@ -54,10 +55,6 @@ impl LobbyExt for Lobby {
         self.apply(ME, command)
     }
 }
-
-/// The most recent round's result.
-#[derive(Resource)]
-pub struct LastReport(pub RoundReport);
 
 /// Bumped whenever something visible changes, so the current screen rebuilds.
 #[derive(Resource, Default)]
@@ -110,11 +107,23 @@ pub struct Planning {
     pub toast: Option<(String, f32)>,
     /// The selected unit's cards while the editor is open, including half-built ones.
     pub draft: Vec<DraftCard>,
+    /// Whether the program panel is open over the field, or docked to a tab.
+    pub editor_open: bool,
+    /// The last round's result, shown as a pop-up, and seconds left to show it.
+    pub result: Option<(RoundReport, f32)>,
 }
+
+/// Seconds the round result pop-up stays up unless dismissed.
+pub const RESULT_SECS: f32 = 6.0;
 
 impl Planning {
     pub fn toast(&mut self, message: impl Into<String>) {
         self.toast = Some((message.into(), 2.5));
+    }
+
+    /// Shows a round's result as a pop-up.
+    pub fn show_result(&mut self, report: RoundReport) {
+        self.result = Some((report, RESULT_SECS));
     }
 
     /// Shows a notice for the highest level reached, if any.

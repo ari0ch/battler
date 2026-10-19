@@ -46,6 +46,7 @@ pub mod img {
     pub const FRAME_EPIC: Handle<Image> = uuid_handle!("1410c6fa-bc61-58e8-a792-294142567038");
     pub const FRAME_RARE: Handle<Image> = uuid_handle!("5ea74b74-8623-583b-b34e-8b7ba71a61fb");
     pub const HEADER_WOOD: Handle<Image> = uuid_handle!("d539aa7f-ae6a-5d73-920c-c3a6a4eacff6");
+    pub const ICON_ARROW_UP: Handle<Image> = uuid_handle!("18cfe5a8-cb6d-50de-91df-eb16bd520e21");
     pub const ICON_AXE: Handle<Image> = uuid_handle!("dd0e10e4-3ea3-57b5-9b35-3a7f8855cab5");
     pub const ICON_BOW: Handle<Image> = uuid_handle!("ae0e2b9f-2787-5470-984d-f8f9c3ec9669");
     pub const ICON_COIN: Handle<Image> = uuid_handle!("8a6f66bb-7a83-5f43-98a1-02edfa29dcd2");
@@ -88,6 +89,7 @@ const IMAGES: &[(Handle<Image>, &[u8])] = &[
     (img::FRAME_EPIC, include_bytes!("../assets/ui/frame_epic.png")),
     (img::FRAME_RARE, include_bytes!("../assets/ui/frame_rare.png")),
     (img::HEADER_WOOD, include_bytes!("../assets/ui/header_wood.png")),
+    (img::ICON_ARROW_UP, include_bytes!("../assets/ui/icon_arrow_up.png")),
     (img::ICON_AXE, include_bytes!("../assets/ui/icon_axe.png")),
     (img::ICON_BOW, include_bytes!("../assets/ui/icon_bow.png")),
     (img::ICON_COIN, include_bytes!("../assets/ui/icon_coin.png")),

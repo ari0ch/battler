@@ -113,6 +113,26 @@ The skill lies in planning, and in reading why a plan went wrong.
 
 ### Scenes
 
+**One round screen (Oct 2026, decluttering pass).** Planning, battle and the round result
+all happen on one screen; there is no separate battle or result scene:
+- The **battlefield is the centre of the screen** in both phases (full board, 66 px cells,
+  your half with grid lines while planning, open grass in battle). An **up arrow** above it
+  points at the enemy; hover it for who that is. No text around the battle.
+- During planning the enemy half **previews the next opponent**: PvE waves stand where
+  they will fight; versus rounds just say "Versus".
+- **Synergies are icons only** (class icon, count, gold frame when active, faded when
+  bench-only); details on hover. Bench is a 3x3 grid on the left; players on the right.
+- The **program panel lies over the right side** and docks to a tab (Tab key or the tab
+  button). Selecting a unit opens it; **pressing Ready docks it** for the battle.
+- The **battle plays on the same field**; the header swaps the timer for speed/skip
+  controls, and the shop shows "Battle!" instead of its buttons.
+- The **round result is a small pop-up** over the next planning phase, whose **timer is
+  already running** (needed for multiplayer, where rounds can't wait for one player). It
+  closes itself after 6 seconds or on OK; the gold breakdown is in its tooltip.
+- Replays from the run summary still have a screen of their own.
+
+The notes below describe the earlier multi-scene flow and are kept for history.
+
 Main menu → **run loop** (Planning → Battle → Result, repeated each round) → Game over →
 Run summary → Main menu.
 
@@ -494,3 +514,49 @@ In rough order. Each item is discussed before it is built.
 5. **Done (Oct 2026): game length.** Round-scaled loss damage; ~15 rounds, ~20 minutes.
 6. **XP curve for shorter games:** players rarely reach levels 7-8 before a lobby ends.
    Consider cheaper levels or more XP per round, checked with the harness.
+
+## Roadmap (agreed Oct 2026)
+
+Remaining phases in suggested order. Each is discussed before it is built; the
+numbered list above stays as the record of what was done.
+
+1. **Finish the decluttering pass (next).**
+   - Check the one-screen layout live; fix spacing and overlapping text.
+   - Proper art pass for the main menu and game over screens.
+   - **"What fired" feedback:** the card a unit last ran on hover during battle, and a
+     per-unit summary in the result pop-up ("Aimed Shot x3, Shield Wall never
+     triggered"), so a loss can be debugged.
+2. **Battle readability and feel.**
+   - Death animations (fade or fall) instead of units vanishing.
+   - Simple ability effects: Frost Nova ring, heal sparkles, taunt lines, signal pulses.
+   - Tune movement feel; light screen shake on crits and boss hits.
+3. **Items** (needs a design conversation first): equipment dropped by monster and boss
+   rounds. To settle: what items change (stats, new blocks, modified abilities), whether
+   they combine TFT-style, and where they live in the decluttered layout.
+4. **Balance and opponents.**
+   - Faster XP curve now games end around round 15 (levels 7-8 are rarely reached).
+   - Bots that use the newer blocks (synergy blocks, the `it` target).
+   - Bot difficulty levels (bots currently crush a player who doesn't plan merges).
+   - Known outliers: Vex weaker than a Common; Seraphine and Ysolde strongest.
+   - More monster and boss variety for long games.
+5. **Programming quality of life.**
+   - Copy a program between units; suggested starting programs per character.
+   - "Why didn't this card fire?" explanations (no enemy in range, on cooldown...).
+6. **Presentation.**
+   - Animated sprites: 2-4 frame idle and attack loops from the same art scripts.
+   - Sound and music (Bevy's audio feature; check the WASM size cost).
+   - A short guided first run built on the three monster rounds; remembered settings
+     (speed, volume).
+7. **Multiplayer, in stages** (the lobby is deterministic, bots only act through player
+   commands, and the result pop-up keeps the timer running, so the groundwork is in place).
+   1. Asynchronous play: store each real player's board per round on a small backend and
+      fight those recorded boards instead of bots.
+   2. Accounts, saved runs and leaderboards.
+   3. Live 8-player lobbies: a Rust server runs the `Lobby`; clients send commands;
+      timer sync and reconnection.
+   4. Viewing other players' boards from the standings (fits stage 1 or 3).
+8. **Platform.**
+   - Phone layout and touch controls.
+   - A loading screen.
+   - Screenshot-based UI tests in CI, to catch visual regressions.
+

@@ -46,8 +46,12 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 ## Game crate architecture
 
 - `state.rs`: `AppState` (MainMenu, InRun, GameOver, Replay) with the `RunPhase` sub-state
-  (Planning, Battle, Result), plus shared resources. Screens spawn with
-  `DespawnOnExit(..)` so they clean up on state change.
+  (Planning, Battle), plus shared resources. Screens spawn with `DespawnOnExit(..)` so
+  they clean up on state change. **The round screen (`planning.rs`) lives for all of
+  `InRun`** and rebuilds in both phases: in Battle its field is
+  `battle::spawn_battle_field`; the round result is a pop-up (`result::spawn_result_popup`)
+  driven by `Planning.result`. `battle.rs` keeps playback systems, and a screen only for
+  replays.
 - `ui.rs`: everything is Bevy UI on a fixed 1280x720 stage scaled with `UiScale`.
   Clickables are headless `bevy::ui_widgets::Button`s tagged `Clickable(UiAction)`; one
   global `Activate` observer queues actions. Drag and drop: `DragSource` / `DropTarget`

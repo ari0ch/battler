@@ -64,16 +64,8 @@ pub fn apply_actions(
                     next_app.set(AppState::Replay);
                 }
             }
-            UiAction::Continue => {
-                let Some(run) = run.as_ref() else { continue };
-                if run.0.me().is_alive() && !run.0.is_over() {
-                    if let Some(next) = next_phase.as_mut() {
-                        next.set(RunPhase::Planning);
-                    }
-                } else {
-                    next_app.set(AppState::GameOver);
-                }
-            }
+            UiAction::Continue => planning.result = None,
+            UiAction::ToggleEditor => planning.editor_open = !planning.editor_open,
             other => {
                 if *state.get() != AppState::InRun {
                     continue;
@@ -141,6 +133,10 @@ fn planning_action(
                 && let Some((setup, _, opponent)) = lobby.battle_for(crate::state::ME)
             {
                 commands.insert_resource(Playback::new(setup.clone(), false, Some(opponent)));
+                // The battle plays on the field: dock the program panel and
+                // close any leftover result pop-up.
+                planning.editor_open = false;
+                planning.result = None;
                 if let Some(next) = next_phase {
                     next.set(RunPhase::Battle);
                 }
@@ -152,6 +148,8 @@ fn planning_action(
                 planning.selected = picked;
                 editor::load_draft(lobby.me(), planning);
             }
+            // Picking a unit brings up its program.
+            planning.editor_open = true;
         }
         UiAction::ClickCell(p) => move_selected_to(lobby, planning, Location::Board(p)),
         UiAction::ClickBench(i) => move_selected_to(lobby, planning, Location::Bench(i)),

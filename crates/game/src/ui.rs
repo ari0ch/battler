@@ -28,7 +28,6 @@ pub mod color {
     pub const BG: Color = Color::srgb(0.114, 0.102, 0.169);
     pub const BG_DEEP: Color = Color::srgb(0.078, 0.067, 0.125);
     pub const PANEL_2: Color = Color::srgb(0.227, 0.192, 0.314);
-    pub const LINE: Color = Color::srgb(0.290, 0.227, 0.165);
     pub const LINE_STRONG: Color = Color::srgb(0.361, 0.227, 0.133);
     pub const CELL: Color = Color::srgba(0.0, 0.0, 0.0, 0.0);
     /// Grid lines drawn over the grass board.
@@ -50,7 +49,6 @@ pub mod color {
     pub const RED_TEXT: Color = Color::srgb(1.0, 0.604, 0.541);
     pub const GOOD: Color = Color::srgb(0.608, 0.878, 0.478);
     pub const BAD: Color = Color::srgb(1.0, 0.541, 0.478);
-    pub const HP_FILL: Color = Color::srgb(0.373, 0.761, 0.494);
     pub const CRIT: Color = Color::srgb(1.0, 0.824, 0.353);
     pub const COND_LINE: Color = Color::srgb(0.486, 0.776, 0.863);
     pub const COND_TEXT: Color = Color::srgb(0.059, 0.165, 0.227);
@@ -63,7 +61,6 @@ pub mod color {
     pub const RARE: Color = Color::srgb(0.486, 0.776, 0.878);
     pub const EPIC: Color = Color::srgb(0.851, 0.651, 1.0);
     pub const ACTIVE_FILL: Color = Color::srgba(0.957, 0.706, 0.106, 0.14);
-    pub const ACTIVE_LINE: Color = Color::srgb(0.690, 0.478, 0.118);
     /// Outline drawn around pixel-art text and numbers.
     pub const OUTLINE: Color = Color::srgb(0.102, 0.078, 0.149);
 }
@@ -117,6 +114,8 @@ pub enum UiAction {
     /// Sell a specific unit (the E hotkey sells whatever is under the pointer).
     SellAt(Location),
     DismissNotice,
+    /// Open the program panel, or dock it to its tab.
+    ToggleEditor,
     PaletteBlock(Block),
     /// Clicking a filled slot cycles its setting (threshold, target...).
     CycleSlot(usize, Slot),
@@ -125,6 +124,7 @@ pub enum UiAction {
     Speed(u32),
     Skip,
     ToggleTrace,
+    /// Close the round result pop-up.
     Continue,
     Replay(usize),
     BackToSummary,
