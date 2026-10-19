@@ -68,13 +68,29 @@ The skill lies in planning, and in reading why a plan went wrong.
 
 ### Run structure
 
-- **Single-player first, against AI boards.** AI opponents use the same shop and program
-  rules as the player, drawing on pre-written programs per class, and get stronger each
-  round. Async PvP can come later by swapping AI boards for snapshots of real players.
-- **Player health:** 100 HP. A loss costs **2 + the total level of the enemy units still
-  alive**, so a narrow loss hurts less than a wipe. A draw costs nothing.
-  (TFT-like model chosen as a first pass; revisit after playtesting.)
-- **The run ends** at 0 HP (defeat) or after winning through round 15 (victory).
+- **Eight-player lobby (Oct 2026).** You and seven bots. **Last one standing wins**;
+  there is no round limit, and everyone gets a placement (1st to 8th).
+- **Bots are players.** Each bot owns a full player state (HP, gold, level, XP, shop,
+  bench, board) and changes it only by sending the same commands as the human (buy,
+  sell, reroll, buy XP, move, set program). So every bot board is a real, legal board,
+  and multiplayer can later replace bots with people, or let anyone view any board.
+- **Shared pool.** Every shop draws from one pool: 29 copies of each Common, 22 of each
+  Rare, 18 of each Epic. Knocked-out players' units return to it.
+- **Round types.** Rounds 1-3 are monster rounds (Slimes, Wolf pack, Goblin raiders,
+  each teaching one idea). A boss comes every 4 rounds from round 7 (Ogre Chieftain,
+  Frost Wyrm, The Lich, then again, 80% stronger each cycle). Every other round is
+  versus: random pairs, avoiding last round's opponent; with an odd number left, one
+  player fights a **ghost** (a copy of another living player's board).
+- **Player health:** 100 HP. A versus loss costs **2 + the total level of the enemy
+  units still alive**, so a narrow loss hurts less than a wipe. A draw costs nothing.
+  A monster round loss costs 2; a boss loss costs **2 + the round number**. Losing to a
+  ghost costs nothing.
+- **Rewards:** +1 gold for a versus win, +2 for beating monsters, +4 for a boss.
+  PvE rounds leave win/loss streaks alone.
+- **Knock-outs:** players reaching 0 HP are out; if several fall in the same round,
+  the one with the lowest (most negative) HP places lowest.
+- **Battles spawn units alternating between the sides**, so neither side always acts
+  first within a tick.
 - **Player level** (TFT-style) replaces round-based board size. Level sets how many units
   may be on the board, the shop's rarity odds, and which blocks are unlocked.
   Starting numbers (to be checked by simulation later):
@@ -196,14 +212,25 @@ In priority order:
   - **The naive bot reaches round ~12.5 and wins ~1 battle per run; 0% victories.** The AI
     (levels with the round, gets stars automatically) may be too strong for players who
     don't plan merges. Watch this in playtesting.
-- **Turn order:** player units are spawned first, so they act first each tick. A small
-  first-mover advantage; consider interleaving if it shows up in testing.
+- **Turn order:** units now spawn alternating between the sides (Oct 2026).
+- **Lobby harness (Oct 2026, 200 lobbies of 7 bots plus a naive player).** Bosses tuned
+  so bots beat them about 70% of the time on their first appearance:
+
+  | Round | Bot win rate |
+  |---|---|
+  | Slimes, Wolf pack, Goblin raiders (1-3) | 100% |
+  | Ogre Chieftain (7) / Frost Wyrm (11) / The Lich (15) | 72% / 69% / 71% |
+  | Second cycle (19 / 23 / 27) | 65% / 52% / 48% |
+
+  Lobbies last **28.6 rounds on average** (23 to 35). At about 90 seconds a round, a
+  winner plays ~40 minutes. A naive player (buys anything, no merge or synergy plan)
+  places 7.5th on average: the bots are much stronger than someone who doesn't plan.
 
 ## Open questions
 
 1. **More randomness?** Crits are implemented (see below). Dodges or damage ranges could
    follow if fights feel too predictable.
-2. **AI difficulty curve:** how quickly AI boards gain levels and units.
+2. **Bot difficulty:** one bot strategy for now; difficulty levels may follow.
 3. **Art direction and sourcing** for pixel art.
 4. **Simulation pass** on player level numbers, shop odds and block unlocks once built.
 
@@ -246,7 +273,7 @@ Rules:
 - Synergies count **units on the board only**; each character counts once.
 - If a synergy drops (a unit sold or benched), cards using its blocks are **kept but greyed
   out and skipped** in battle, and the tracker warns. Programs are never lost.
-- **AI opponents build towards synergies** too.
+- **Bots build towards synergies** too (two focus classes each).
 - All effects are first guesses for the balance harness.
 
 ## Block reassessment (agreed; to be checked by simulation)
@@ -374,28 +401,19 @@ Goal: prove the program → watch → analyse loop is fun, then add the shop.
   rarities and passives, player level and XP, rarity shop odds, progressive block unlocks,
   hover tooltips, level-up notices, hotkeys, programming-hook synergies including Fury,
   synergy tracker and battle strip, and a headless balance harness.
+- **Lobby (built, Oct 2026):** eight-player lobby with bots as players, shared pool,
+  monster and boss rounds, ghosts, placements; the planning screen's enemy half previews
+  the monster wave or shows the lobby standings.
 - **Next candidates:** pixel art (32x32 sprites shown at 2x), projectile/taunt lines,
-  synergy-aware AI programs, balance passes from playtesting.
+  synergy-aware bot programs, balance passes from playtesting.
 
 ## Upcoming development
 
 In rough order. Each item is discussed before it is built.
 
-1. **PvE rounds (agreed, Oct 2026):** easy monster rounds at the start of a run plus
-   "boss" rounds on set rounds. Gives new players a gentle start and a natural place to
-   drop rewards.
-   - **Separate monster roster**, not weakened characters: monsters have fixed stats and
-     fixed programs, and never appear in the shop, pool, synergies or merges.
-   - **Monster rounds 1-3**, each teaching one idea (slimes: just fight; wolves: they gang
-     up, so heal/taunt; goblins: archers behind a brute, so target the back line).
-     **Bosses on rounds 7, 11 and 15**; bosses use HP-phase programs.
-   - **Rewards:** a little gold for winning, until items exist.
-   - **Losses:** monster rounds cost a flat small amount; boss losses cost more, scaling
-     with the round.
-   - **AI opponents are players, not generated boards.** Bots must own a full player
-     state (gold, shop, bench, board, XP) and change it only through the same actions as
-     the human, so that multiplayer can later track ~8 boards per lobby and let anyone
-     view any board. Bots also play the monster rounds. (Lobby design under discussion.)
+1. **Done (Oct 2026): PvE rounds and the lobby.** See Run structure. Monsters are a
+   separate roster (`crates/sim/src/monster.rs`) with fixed stats and programs; they never
+   appear in the shop, pool, synergies or merges. Bosses use HP-phase programs.
 2. **Playtest clean-up pass (Oct 2026 browser playtest):** header stats and the Buy XP /
    Reroll buttons wrap; long names overflow shop cards; the level-up notice covers the
    top of the board; the palette jumps down when a card row is added, causing misclicks;
@@ -406,3 +424,7 @@ In rough order. Each item is discussed before it is built.
    proper starts (TFT-style). Not designed yet. Questions to settle: what items do (stats,
    new blocks, modified abilities?), how they combine, and how they are equipped in the
    one-screen planning layout.
+4. **Viewing other boards:** click a player in the standings to see their board (the
+   state is all there; it needs a screen).
+5. **Game length:** lobbies last ~28 rounds (see Playtest notes). If that feels long,
+   add round-based damage to versus losses.

@@ -12,9 +12,13 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   **No dependencies.** Keep it that way unless there's a strong reason, and discuss first.
 - `crates/game`: `battler`, the Bevy 0.20 client. Rendering, input, editor, replay.
   It reads sim state; game rules never live here.
-- `crates/sim/src/run/`: the run (shop, pool, bench, board, merges, economy, AI boards,
-  per-round `BattleSetup` history for replays). Tuning numbers live in `run/economy.rs`;
-  class/character stats in `class.rs`; synergy rules in `synergy.rs`.
+- `crates/sim/src/run/`: the run. `Lobby` (eight players, shared `Pool`, matchmaking,
+  round resolution, knock-outs), `Player` (one board: shop, bench, merges, economy,
+  per-round `BattleSetup` history for replays) and `bot` (computer players). **Every
+  change to a player goes through `Lobby::apply(PlayerId, Command)`**, for humans and
+  bots alike; bots never get a shortcut. Monsters for PvE rounds live in `monster.rs`.
+  Tuning numbers live in `run/economy.rs`; class/character stats in `class.rs`; synergy
+  rules in `synergy.rs`; monster and boss stats in `monster.rs`.
 - `.github/workflows/ci.yml`: fmt, clippy (`-D warnings`) and tests on every push.
 - `.github/workflows/deploy.yml`: trunk WASM build, deployed to GitHub Pages on `main`.
   The live build is at https://ari0ch.github.io/battler/
@@ -33,7 +37,8 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 
 - `cargo test -p battler-sim`: fast sim tests.
 - `cargo run -p battler-sim --example balance --release`: balance harness (character and
-  class win rates in random fights, bot runs). Run it after changing numbers.
+  class win rates in random fights; full lobbies: length, PvE win rates). Run it after
+  changing numbers.
 - `cargo dev`: run the game natively with dynamic linking (alias in `.cargo/config.toml`).
 - `cd crates/game && trunk serve`: run the web build locally.
 - `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` before committing.
@@ -48,7 +53,8 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   global `Activate` observer queues actions. Drag and drop: `DragSource` / `DropTarget`
   plus picking observers. **Import `bevy::ui_widgets::Button` explicitly**: the prelude's
   `Button` and `Interaction` are deprecated in 0.20 and fail clippy.
-- `actions.rs`: the only place UI input changes the `Run`.
+- `actions.rs`: the only place UI input changes the lobby. The human is player 0
+  (`state::ME`); `state::LobbyExt` adds `me()` and `act(Command)` to `Lobby`.
 - `planning.rs`: the one-screen planning layout. `editor.rs`: the program column (cards +
   palette) and editing logic. `cards.rs`: all block/character/synergy wording and tooltips.
 - Tooltips: add `Hovered::default()` plus a `ui::Tooltip` to any entity; one shared
