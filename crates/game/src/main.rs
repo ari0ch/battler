@@ -7,6 +7,7 @@ mod actions;
 mod battle;
 mod cards;
 mod editor;
+mod effects;
 mod kit;
 mod menu;
 mod motion;

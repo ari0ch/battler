@@ -90,6 +90,24 @@ pub fn lunge(bodies: &mut HashMap<UnitId, Body>, attacker: UnitId, target: UnitI
     }
 }
 
+impl Body {
+    /// How far into a melee lunge this body is: 0 when not lunging, rising to
+    /// 1 at full reach and back. The sprite leans into the swing with it.
+    pub fn lunge_reach(&self) -> f32 {
+        self.lunge.map_or(0.0, |(_, left)| {
+            (std::f32::consts::PI * left.max(0.0) / LUNGE_SECS).sin().max(0.0)
+        })
+    }
+}
+
+/// Moves a body straight to `to` with no glide (Blink, Shadowstep).
+pub fn teleport(bodies: &mut HashMap<UnitId, Body>, unit: UnitId, to: Vec2) {
+    if let Some(b) = bodies.get_mut(&unit) {
+        b.pos = to + b.offset;
+        b.vel = Vec2::ZERO;
+    }
+}
+
 /// Knocks `target` away from `from` with an instant push of `speed` px/s.
 pub fn knock(bodies: &mut HashMap<UnitId, Body>, target: UnitId, from: UnitId, speed: f32) {
     let Some(from_pos) = bodies.get(&from).map(|b| b.pos) else { return };
@@ -259,5 +277,32 @@ mod tests {
         }
         assert!(closest < start.distance(bodies[&foe].pos) - 8.0, "lunged forward");
         assert!(bodies[&me].pos.distance(start) < 3.0, "came back");
+    }
+
+    #[test]
+    fn lunge_reach_rises_and_falls() {
+        let b = battle(&[(Team::Player, 3, 3), (Team::Enemy, 4, 3)]);
+        let mut bodies = spawn(&b, centre, |_| 22.0);
+        let (me, foe) = (b.units()[0].id, b.units()[1].id);
+        assert_eq!(bodies[&me].lunge_reach(), 0.0);
+        lunge(&mut bodies, me, foe);
+        let mut peak = 0.0f32;
+        for _ in 0..30 {
+            step(&mut bodies, &b, centre, SIZE, 1.0 / 60.0);
+            peak = peak.max(bodies[&me].lunge_reach());
+        }
+        assert!(peak > 0.9, "peak {peak}");
+        assert_eq!(bodies[&me].lunge_reach(), 0.0, "over after LUNGE_SECS");
+    }
+
+    #[test]
+    fn teleport_moves_without_gliding() {
+        let b = battle(&[(Team::Player, 0, 0)]);
+        let mut bodies = spawn(&b, centre, |_| 22.0);
+        let me = b.units()[0].id;
+        let to = Vec2::new(300.0, 40.0);
+        teleport(&mut bodies, me, to);
+        assert!(bodies[&me].pos.distance(to) <= SCATTER * 1.5);
+        assert_eq!(bodies[&me].vel, Vec2::ZERO);
     }
 }
