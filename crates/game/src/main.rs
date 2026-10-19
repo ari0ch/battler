@@ -9,6 +9,7 @@ mod cards;
 mod editor;
 mod kit;
 mod menu;
+mod motion;
 mod planning;
 mod result;
 mod sprites;

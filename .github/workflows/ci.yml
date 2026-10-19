@@ -39,3 +39,13 @@ jobs:
             echo "::error title=clippy::${msgs}"
             exit 1
           fi
+      # Game-crate unit tests (pure logic such as battle motion). Failures are
+      # published as an annotation too.
+      - name: Tests
+        run: |
+          set -o pipefail
+          if ! cargo test -p battler --bins --color never 2>&1 | tee test.txt; then
+            msgs=$(grep -E "panicked|FAILED|assert|left:|right:" test.txt | head -60 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=tests::${msgs}"
+            exit 1
+          fi

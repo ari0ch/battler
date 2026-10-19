@@ -159,7 +159,16 @@ Run summary → Main menu.
   art pass".
 - **Board look (agreed):** planning shows one grass field with grid lines over it (not
   separate tiles); battle shows open grass with no grid, a red tint on the enemy half
-  and team-coloured shadows under units. Next: free-looking unit movement in battle.
+  and team-coloured shadows under units.
+- **Battle movement (Oct 2026): free-looking, grid underneath.** The sim still moves
+  units cell to cell and decides everything; the battle screen draws each unit as a
+  free *body* (`crates/game/src/motion.rs`) that steers smoothly towards its cell at a
+  small per-unit offset, pushes apart from overlapping bodies (collision radius about a
+  third of the sprite, so bosses take more room), lunges at melee targets, is knocked
+  back when hit, faces what it attacks or where it walks, and hops while walking.
+  Ranged attacks fire a small projectile (orange for mages). Units lower on screen draw
+  on top. Purely visual: replays and results are unchanged. Kept small so the picture
+  stays honest about the grid rules (`adjacent`, `within 2 cells`).
 
 ### Shop and bench
 

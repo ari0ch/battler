@@ -13,6 +13,7 @@ use bevy::prelude::*;
 
 use crate::cards;
 use crate::kit;
+use crate::motion::{self, Body};
 use crate::planning::spawn_pips;
 use crate::sprites::{SPRITE_PX, Sprites, battle_scale, sprite_node};
 use crate::state::{AppState, GameRun, LastReport, LobbyExt, Planning, Rev, RunPhase, Settings};
@@ -29,7 +30,15 @@ impl Plugin for BattlePlugin {
             .add_systems(OnEnter(AppState::Replay), |mut rev: ResMut<Rev>| rev.bump())
             .add_systems(
                 Update,
-                (rebuild, advance, animate_units, animate_floaters, refresh_trace)
+                (
+                    rebuild,
+                    advance,
+                    move_bodies,
+                    animate_units,
+                    animate_projectiles,
+                    animate_floaters,
+                    refresh_trace,
+                )
                     .chain()
                     .run_if(watching),
             );
@@ -61,8 +70,9 @@ pub struct Playback {
     pub opponent: Option<Opponent>,
     /// Seconds into the current tick.
     timer: f32,
-    /// Where each unit was before the latest tick, to glide from.
-    prev: HashMap<UnitId, Pos>,
+    /// How each unit is drawn: a free position on the field (see `motion.rs`).
+    /// Updated every frame by `move_bodies`.
+    bodies: HashMap<UnitId, Body>,
     /// Which card each unit ran on the latest tick.
     fired: HashMap<UnitId, CardRef>,
     /// Badge text per unit and how long it stays up.
@@ -76,14 +86,16 @@ pub struct Playback {
 impl Playback {
     pub fn new(setup: BattleSetup, replay: bool, opponent: Option<Opponent>) -> Self {
         let battle = setup.build();
-        let prev = battle.units().iter().map(|u| (u.id, u.pos)).collect();
+        let bodies = motion::spawn(&battle, field_centre, |u| {
+            SPRITE_PX * battle_scale(u.kind) * BODY_RADIUS
+        });
         Self {
             setup,
             battle,
             replay,
             opponent,
             timer: 0.0,
-            prev,
+            bodies,
             fired: HashMap::new(),
             badges: HashMap::new(),
             ended_for: 0.0,
@@ -102,6 +114,23 @@ struct BoardLayer;
 struct UnitView(UnitId);
 #[derive(Component)]
 struct HpFill(UnitId);
+/// A unit's sprite image, flipped to face where the unit is going.
+#[derive(Component)]
+struct UnitSprite(UnitId);
+/// An arrow or bolt in flight from where it was loosed to its target.
+#[derive(Component)]
+struct Projectile {
+    from: Vec2,
+    target: UnitId,
+    age: f32,
+}
+
+/// Stacking order on the field: units use 1 plus a quarter of their height on
+/// screen (at most about 150), so these always sit above them.
+const PROJECTILE_Z: i32 = 400;
+const FLOATER_Z: i32 = 500;
+/// How long a projectile takes to land, in playback seconds.
+const PROJECTILE_SECS: f32 = 0.18;
 #[derive(Component)]
 struct StatusLetters(UnitId);
 #[derive(Component)]
@@ -131,6 +160,15 @@ fn cell_left(p: Pos) -> f32 {
 fn cell_top(p: Pos) -> f32 {
     (BOARD_DEPTH - 1 - p.x) as f32 * PITCH
 }
+
+/// The centre of a cell on the field, where bodies aim (see `motion.rs`).
+fn field_centre(p: Pos) -> Vec2 {
+    Vec2::new(cell_left(p) + CELL / 2.0, cell_top(p) + CELL / 2.0)
+}
+
+/// A body's collision radius as a fraction of its sprite size: about the
+/// width of the figure, so neighbours can stand close without overlapping.
+const BODY_RADIUS: f32 = 0.34;
 
 #[allow(clippy::too_many_arguments)]
 fn rebuild(
@@ -315,10 +353,9 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprite
                 },
                 Pickable::IGNORE,
             ))
-            .with_child(sprite_node(
-                sprites.unit(unit.kind),
-                battle_scale(unit.kind),
-                !player,
+            .with_child((
+                sprite_node(sprites.unit(unit.kind), battle_scale(unit.kind), !player),
+                UnitSprite(unit.id),
             ));
             // The health bar over its head.
             let bar_w = (size - 12.0).max(52.0);
@@ -410,7 +447,6 @@ fn advance(
         if pb.timer >= TICK_SECONDS {
             pb.timer = 0.0;
             let pb = &mut *pb;
-            pb.prev = pb.battle.units().iter().map(|u| (u.id, u.pos)).collect();
             let events = pb.battle.step();
             pb.fired.clear();
             if let Ok(board) = board.single() {
@@ -447,7 +483,8 @@ fn advance(
 
 /// Turns one sim event into a badge or floating number.
 fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: &Event) {
-    let pos_of = |id: UnitId, pb: &Playback| pb.battle.unit(id).map(|u| u.pos);
+    // Floaters appear where the unit is drawn, not at its cell.
+    let pos_of = |id: UnitId, pb: &Playback| pb.bodies.get(&id).map(|b| b.pos);
     match *event {
         Event::CardFired { unit, card } => {
             pb.fired.insert(unit, card);
@@ -463,7 +500,18 @@ fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: 
             };
             pb.badges.insert(unit, (label, TICK_SECONDS * 1.6));
         }
-        Event::Attacked { target, damage, crit, .. } => {
+        Event::Attacked { attacker, target, damage, crit } => {
+            // Melee attackers lunge at their target; ranged ones loose a
+            // projectile. Either way the target is knocked back a little.
+            let ranged = pb.battle.unit(attacker).is_some_and(|u| u.is_ranged());
+            match (ranged, pos_of(attacker, pb)) {
+                (true, Some(from)) => {
+                    let mage = pb.battle.unit(attacker).is_some_and(|u| u.class == Class::Mage);
+                    spawn_projectile(commands, board, from, target, mage);
+                }
+                _ => motion::lunge(&mut pb.bodies, attacker, target),
+            }
+            motion::knock(&mut pb.bodies, target, attacker, if crit { 160.0 } else { 90.0 });
             if let Some(p) = pos_of(target, pb) {
                 let (label, c, size) = if damage == 0 {
                     ("Blocked".to_string(), color::BLUE_TEXT, 14.0)
@@ -509,24 +557,88 @@ fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: 
     }
 }
 
-fn spawn_floater(
+/// Steps every unit's body (see `motion.rs`) by this frame's playback time.
+fn move_bodies(time: Res<Time<Real>>, settings: Res<Settings>, mut pb: ResMut<Playback>) {
+    // Long frames (a background tab) are capped so bodies don't fly apart.
+    let dt = (time.delta_secs() * settings.speed as f32).min(0.1);
+    // `ResMut` derefs to the whole `Playback`; reborrowing it as a plain
+    // `&mut Playback` lets us borrow two of its fields at once (one mutably),
+    // which a borrow through the smart pointer would not allow.
+    let pb = &mut *pb;
+    motion::step(&mut pb.bodies, &pb.battle, field_centre, Vec2::new(BOARD_W, BOARD_H), dt);
+}
+
+/// Looses a projectile from `from` towards `target`'s body: a gold arrow, or
+/// an orange bolt for mages.
+fn spawn_projectile(
     commands: &mut Commands,
     board: Entity,
-    p: Pos,
-    label: String,
-    c: Color,
-    size: f32,
+    from: Vec2,
+    target: UnitId,
+    mage: bool,
 ) {
-    let top = cell_top(p) + 18.0;
+    let from = from - Vec2::new(0.0, 18.0);
+    let fill = if mage { Color::srgb(0.910, 0.463, 0.165) } else { color::GOLD_LIGHT };
     commands.entity(board).with_children(|b| {
         b.spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: px(cell_left(p) + 44.0),
+                left: px(from.x - 4.0),
+                top: px(from.y - 4.0),
+                width: px(8),
+                height: px(8),
+                ..default()
+            },
+            BackgroundColor(fill),
+            Outline { width: px(2), offset: px(0), color: color::OUTLINE },
+            ZIndex(PROJECTILE_Z),
+            Projectile { from, target, age: 0.0 },
+            Pickable::IGNORE,
+        ));
+    });
+}
+
+/// Flies projectiles along a shallow arc to their target and removes them on arrival.
+fn animate_projectiles(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    settings: Res<Settings>,
+    pb: Res<Playback>,
+    mut q: Query<(Entity, &mut Projectile, &mut Node)>,
+) {
+    let dt = time.delta_secs() * settings.speed as f32;
+    for (e, mut p, mut node) in &mut q {
+        p.age += dt;
+        let t = (p.age / PROJECTILE_SECS).min(1.0);
+        let to = pb.bodies.get(&p.target).map_or(p.from, |b| b.pos - Vec2::new(0.0, 18.0));
+        let arc = 4.0 * t * (1.0 - t) * 20.0;
+        let at = p.from.lerp(to, t) - Vec2::new(0.0, arc);
+        node.left = px(at.x - 4.0);
+        node.top = px(at.y - 4.0);
+        if t >= 1.0 {
+            commands.entity(e).despawn();
+        }
+    }
+}
+
+fn spawn_floater(
+    commands: &mut Commands,
+    board: Entity,
+    p: Vec2,
+    label: String,
+    c: Color,
+    size: f32,
+) {
+    let top = p.y - 30.0;
+    commands.entity(board).with_children(|b| {
+        b.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(p.x + 6.0),
                 top: px(top),
                 ..default()
             },
-            ZIndex(5),
+            ZIndex(FLOATER_Z),
             Floater { age: 0.0, base_top: top, color: c },
             Pickable::IGNORE,
         ))
@@ -560,19 +672,22 @@ fn animate_floaters(
 #[allow(clippy::type_complexity)]
 fn animate_units(
     pb: Res<Playback>,
-    mut views: Query<(&UnitView, &mut Node), (Without<HpFill>, Without<Badge>)>,
-    mut bars: Query<(&HpFill, &mut Node, &mut ImageNode), (Without<UnitView>, Without<Badge>)>,
+    mut views: Query<(&UnitView, &mut Node, &mut ZIndex), (Without<HpFill>, Without<Badge>)>,
+    mut bars: Query<
+        (&HpFill, &mut Node, &mut ImageNode),
+        (Without<UnitView>, Without<Badge>, Without<UnitSprite>),
+    >,
+    mut sprites: Query<(&UnitSprite, &mut ImageNode), Without<HpFill>>,
     mut badges: Query<(&Badge, &mut Visibility, &Children), (Without<UnitView>, Without<HpFill>)>,
     mut letters: Query<(&StatusLetters, &mut Text)>,
     mut badge_text: Query<&mut Text, Without<StatusLetters>>,
 ) {
     let battle = &pb.battle;
-    // Glide over the first 60% of a tick, easing out.
-    let t = (pb.timer / (TICK_SECONDS * 0.6)).clamp(0.0, 1.0);
-    let t = 1.0 - (1.0 - t) * (1.0 - t);
     let tick = battle.tick();
+    // Snap to the art's pixel grid (2 screen pixels at 2x) so sprites stay crisp.
+    let snap = |v: f32| (v / 2.0).round() * 2.0;
 
-    for (view, mut node) in &mut views {
+    for (view, mut node, mut z) in &mut views {
         let Some(unit) = battle.unit(view.0) else { continue };
         if !unit.is_alive() {
             node.display = Display::None;
@@ -580,10 +695,24 @@ fn animate_units(
         }
         // Resurrection can bring a unit back.
         node.display = Display::Flex;
-        let from = pb.prev.get(&unit.id).copied().unwrap_or(unit.pos);
-        let lerp = |a: f32, b: f32| a + (b - a) * t;
-        node.left = px(lerp(cell_left(from), cell_left(unit.pos)));
-        node.top = px(lerp(cell_top(from), cell_top(unit.pos)));
+        let Some(body) = pb.bodies.get(&unit.id) else { continue };
+        // A little hop with each step while walking.
+        let hop =
+            if body.vel.length() > 18.0 { (body.stride / 9.0).sin().abs() * 4.0 } else { 0.0 };
+        node.left = px(snap(body.pos.x - CELL / 2.0));
+        node.top = px(snap(body.pos.y - CELL / 2.0 - hop));
+        // Units lower on the field are nearer the viewer, so draw them on top.
+        let depth = 1 + (body.pos.y / 4.0) as i32;
+        if z.0 != depth {
+            z.0 = depth;
+        }
+    }
+    for (s, mut image) in &mut sprites {
+        if let Some(body) = pb.bodies.get(&s.0)
+            && image.flip_x != body.facing_left
+        {
+            image.flip_x = body.facing_left;
+        }
     }
     for (bar, mut node, mut image) in &mut bars {
         if let Some(unit) = battle.unit(bar.0) {
