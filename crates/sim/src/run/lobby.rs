@@ -429,10 +429,12 @@ impl Lobby {
 
 /// What a PvE round drops for one player (see the Items section of the design
 /// notes): the opening monster waves always drop two commons; a boss drops a
-/// rare on a win (plus an epic from its second cycle on), or a common on a loss.
+/// rare on a win, plus an epic from the second boss of the run on (the Ogre
+/// Chieftain's first visit drops only the rare), or a common on a loss.
 pub(super) fn loot(wave: Wave, result: Option<bool>, rng: &mut Rng) -> Vec<Item> {
+    let first_boss = |w| matches!(w, Wave::Boss { boss: Monster::OgreChieftain, tier: 0 });
     let rarities: &[Rarity] = match (wave, result) {
-        (Wave::Boss { tier, .. }, Some(true)) if tier >= 1 => &[Rarity::Rare, Rarity::Epic],
+        (Wave::Boss { .. }, Some(true)) if !first_boss(wave) => &[Rarity::Rare, Rarity::Epic],
         (Wave::Boss { .. }, Some(true)) => &[Rarity::Rare],
         (Wave::Boss { .. }, _) => &[Rarity::Common],
         _ => &[Rarity::Common, Rarity::Common],

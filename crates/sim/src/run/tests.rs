@@ -450,15 +450,20 @@ fn opening_waves_always_drop_two_commons() {
 fn bosses_drop_by_tier_and_result() {
     use crate::{Monster, Wave};
     let mut rng = crate::Rng::new(1);
-    let boss = |tier| Wave::Boss { boss: Monster::Lich, tier };
-    let rarities = |items: Vec<Item>| items.iter().map(|i| i.rarity()).collect::<Vec<_>>();
-    assert_eq!(rarities(super::lobby::loot(boss(0), Some(true), &mut rng)), vec![Rarity::Rare]);
-    assert_eq!(
-        rarities(super::lobby::loot(boss(1), Some(true), &mut rng)),
-        vec![Rarity::Rare, Rarity::Epic]
-    );
-    assert_eq!(rarities(super::lobby::loot(boss(2), Some(false), &mut rng)), vec![Rarity::Common]);
-    assert_eq!(rarities(super::lobby::loot(boss(0), None, &mut rng)), vec![Rarity::Common]);
+    let boss = |boss, tier| Wave::Boss { boss, tier };
+    let mut drop = |w, result| {
+        super::lobby::loot(w, result, &mut rng).iter().map(|i| i.rarity()).collect::<Vec<_>>()
+    };
+    let (ogre, wyrm, lich) = (Monster::OgreChieftain, Monster::FrostWyrm, Monster::Lich);
+    // The first boss of the run (the Ogre, round 7) drops a rare...
+    assert_eq!(drop(boss(ogre, 0), Some(true)), vec![Rarity::Rare]);
+    // ...every later one a rare and an epic.
+    assert_eq!(drop(boss(wyrm, 0), Some(true)), vec![Rarity::Rare, Rarity::Epic]);
+    assert_eq!(drop(boss(lich, 0), Some(true)), vec![Rarity::Rare, Rarity::Epic]);
+    assert_eq!(drop(boss(ogre, 1), Some(true)), vec![Rarity::Rare, Rarity::Epic]);
+    // Losing (or drawing) gets a consolation common.
+    assert_eq!(drop(boss(lich, 2), Some(false)), vec![Rarity::Common]);
+    assert_eq!(drop(boss(ogre, 0), None), vec![Rarity::Common]);
 }
 
 /// A player owning one Bram and these stashed items.

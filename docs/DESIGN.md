@@ -214,14 +214,16 @@ Equipment that monsters and bosses drop. Items are plain bonuses: stats and simp
 combat effects. Items that change programs (extra cards, new blocks, signals) were
 considered and left out as unnecessary complexity.
 
-**Drops.** All from the lobby's seeded RNG, so a run replays exactly; bots get drops by
+**Drops.** (Epics were first planned from the bosses' second cycle, round 19, but
+games end around round 16, so they key off boss order instead.) All from the lobby's
+seeded RNG, so a run replays exactly; bots get drops by
 the same rules and equip them through the same commands as the human.
 
 | Round | Drop |
 |---|---|
 | 1-3 (monster waves) | 2 commons each, always, win or lose |
-| Bosses, first cycle (tier 0) | 1 rare on a win |
-| Bosses, later cycles (tier 1+) | 1 rare and 1 epic on a win |
+| First boss (Ogre Chieftain, round 7) | 1 rare on a win |
+| Every later boss (round 11 on) | 1 rare and 1 epic on a win |
 | Any boss, lost | 1 common (consolation) |
 
 In battle a dropping monster leaves a glinting pouch where it falls; the round result
