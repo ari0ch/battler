@@ -12,8 +12,37 @@ repository = "https://github.com/ari0ch/battler"
 battler-sim = { path = "crates/sim" }
 # Pinned on purpose: Bevy is pre-1.0 and breaks APIs every release.
 # Upgrade deliberately, following the migration guide.
-# `png` decodes the embedded character sprites.
-bevy = { version = "0.20", default-features = false, features = ["2d", "ui", "png"] }
+#
+# Features are listed one by one rather than through the "2d"/"ui" collections,
+# which also bring scenes, gizmos, animation, post-processing, gamepads, mesh
+# and sprite picking, the clipboard and more that this game never uses. Every
+# feature is code the web build has to download. (The UI renderer needs the
+# sprite renderer, and UI needs text and sprites; those come in by themselves.)
+bevy = { version = "0.20", default-features = false, features = [
+  # App core: ECS, assets, logging, states, the task executor.
+  "std",
+  "async_executor",
+  "multi_threaded",
+  "bevy_asset",
+  "bevy_log",
+  "bevy_state",
+  # A window and input (x11/wayland only matter for native Linux builds).
+  "bevy_winit",
+  "x11",
+  "wayland",
+  # Rendering: WebGL2 on the web, the core 2D camera pipeline, the UI.
+  "webgl2",
+  "bevy_render",
+  "bevy_core_pipeline",
+  "bevy_ui",
+  "bevy_ui_render",
+  "bevy_ui_widgets",
+  "bevy_input_focus",
+  "ui_picking",
+  # Images: the embedded sprites and UI kit are PNGs.
+  "bevy_image",
+  "png",
+] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
