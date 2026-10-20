@@ -147,7 +147,6 @@ impl Net {
 
 /// The online half of a [`GameRun`].
 pub struct Online {
-    pub code: String,
     /// The lobby exactly as the server's log has it.
     confirmed: Lobby,
     /// Steps applied to `confirmed` (the log's length).
@@ -469,10 +468,8 @@ fn start_game(
 ) {
     let mut lobby = Lobby::with_seats(seed, seats);
     lobby.replay(log);
-    let code = world.resource::<Net>().session.as_ref().map(|s| s.0.clone()).unwrap_or_default();
     let secs = ms_left as f32 / 1000.0;
     let online = Online {
-        code,
         confirmed: lobby.clone(),
         seq: log.len() as u32,
         pending: VecDeque::new(),

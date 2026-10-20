@@ -124,7 +124,7 @@ pub fn apply_actions(
                 let Some(run) = run.as_mut() else { continue };
                 planning_action(
                     &mut commands,
-                    &mut **run,
+                    run,
                     &mut planning,
                     next_phase.as_deref_mut(),
                     other,

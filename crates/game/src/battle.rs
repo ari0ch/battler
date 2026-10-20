@@ -468,7 +468,7 @@ fn advance(
                 // The lobby re-plays every battle of the round from its setup,
                 // so this result matches the one just watched.
                 run.lobby.resolve();
-                finish_round(&**run, &mut planning, next_phase.as_deref_mut(), &mut next_app);
+                finish_round(run, &mut planning, next_phase.as_deref_mut(), &mut next_app);
             }
         }
     }
