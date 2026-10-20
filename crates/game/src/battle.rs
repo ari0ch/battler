@@ -5,13 +5,13 @@
 
 use std::collections::HashMap;
 
-use battler_sim::run::economy::{BOARD_DEPTH, BOARD_LANES};
 use battler_sim::run::{BattleSetup, Opponent};
-use battler_sim::{Ability, Battle, CardRef, Class, Event, Outcome, Pos, StatusKind, Team, UnitId};
+use battler_sim::{Ability, Battle, CardRef, Class, Event, Outcome, StatusKind, Team, UnitId};
 use bevy::prelude::*;
 
 use crate::cards;
 use crate::effects::{self, Effect};
+use crate::field::{self, FIELD_H, FIELD_W, Facing};
 use crate::kit;
 use crate::motion::{self, Body};
 use crate::planning::spawn_pips;
@@ -57,11 +57,11 @@ const TRACE_FIRED: Color = Color::srgb(0.541, 0.290, 0.0);
 const TICK_SECONDS: f32 = 0.5;
 /// Pause on the final state before moving on.
 const END_PAUSE: f32 = 1.2;
-/// One cell of the battlefield on screen. The same field is used while
-/// planning (with grid lines) and in battle (open grass).
-pub const CELL: f32 = 66.0;
-pub const BOARD_W: f32 = CELL * BOARD_LANES as f32;
-pub const BOARD_H: f32 = CELL * BOARD_DEPTH as f32;
+/// Roughly a cell's width on screen, for sizing spell effects.
+const CELL: f32 = 72.0;
+/// A unit's node: its feet are at the bottom centre; sprite and bars overhang.
+const UNIT_W: f32 = 96.0;
+const UNIT_H: f32 = 66.0;
 
 /// The battle being watched.
 #[derive(Resource)]
@@ -76,6 +76,9 @@ pub struct Playback {
     /// How each unit is drawn: a free position on the field (see `motion.rs`).
     /// Updated every frame by `move_bodies`.
     bodies: HashMap<UnitId, Body>,
+    /// Where each body's feet are drawn on the isometric field (projected from
+    /// `bodies` every frame).
+    screen: HashMap<UnitId, Vec2>,
     /// Which card each unit ran on the latest tick.
     fired: HashMap<UnitId, CardRef>,
     /// Badge text per unit and how long it stays up.
@@ -96,9 +99,10 @@ pub struct Playback {
 impl Playback {
     pub fn new(setup: BattleSetup, replay: bool, opponent: Option<Opponent>) -> Self {
         let battle = setup.build();
-        let bodies = motion::spawn(&battle, field_centre, |u| {
+        let bodies = motion::spawn(&battle, field::ground_centre, |u| {
             SPRITE_PX * battle_scale(u.kind) * BODY_RADIUS
         });
+        let screen = project(&bodies);
         Self {
             setup,
             battle,
@@ -106,6 +110,7 @@ impl Playback {
             opponent,
             timer: 0.0,
             bodies,
+            screen,
             fired: HashMap::new(),
             badges: HashMap::new(),
             casting: HashMap::new(),
@@ -177,83 +182,31 @@ struct Floater {
     color: Color,
 }
 
-// The board is drawn rotated from sim coordinates: each lane (`y`) is a screen
-// column, and depth (`x`) runs up the screen, so the player's back row is at
-// the bottom and the enemy's back row at the top.
-
-pub fn cell_left(p: Pos) -> f32 {
-    p.y as f32 * CELL
-}
-
-pub fn cell_top(p: Pos) -> f32 {
-    (BOARD_DEPTH - 1 - p.x) as f32 * CELL
-}
-
-/// The centre of a cell on the field, where bodies aim (see `motion.rs`).
-fn field_centre(p: Pos) -> Vec2 {
-    Vec2::new(cell_left(p) + CELL / 2.0, cell_top(p) + CELL / 2.0)
+/// Projects every body from the ground plane onto the isometric field.
+fn project(bodies: &HashMap<UnitId, Body>) -> HashMap<UnitId, Vec2> {
+    bodies.iter().map(|(id, b)| (*id, field::ground_to_screen(b.pos))).collect()
 }
 
 /// A body's collision radius as a fraction of its sprite size: about the
 /// width of the figure, so neighbours can stand close without overlapping.
 const BODY_RADIUS: f32 = 0.34;
 
-/// The battlefield with every unit on it: one open grass field (no tiles),
-/// a red tint over the enemy half and a dashed midline. Animation systems find
-/// it by its `BoardLayer` marker.
+/// The battlefield with every unit on it: the isometric board (open grass,
+/// no grid) with the units standing on it. Animation systems find it by its
+/// `BoardLayer` marker.
 pub fn spawn_battle_field(parent: &mut ChildSpawnerCommands, battle: &Battle, sprites: &Sprites) {
     parent
         .spawn((
-            Node {
-                width: px(BOARD_W),
-                height: px(BOARD_H),
-                flex_shrink: 0.0,
-                overflow: Overflow::clip(),
-                ..default()
-            },
-            kit::tiled(kit::img::FIELD_GRASS, true, true),
-            Outline { width: px(4), offset: px(0), color: color::LINE_STRONG },
+            Node { width: px(FIELD_W), height: px(FIELD_H), flex_shrink: 0.0, ..default() },
             BoardLayer,
+            Pickable::IGNORE,
         ))
         .with_children(|board| {
-            field_backdrop(board);
+            field::spawn_board(board, false);
             for unit in battle.units() {
                 spawn_unit(board, unit, sprites);
             }
         });
-}
-
-/// The enemy half's tint and the dashed midline, shared with the planning field.
-pub fn field_backdrop(board: &mut ChildSpawnerCommands) {
-    board.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(0),
-            right: px(0),
-            top: px(0),
-            height: px(BOARD_H / 2.0),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.235, 0.078, 0.118, 0.28)),
-        Pickable::IGNORE,
-    ));
-    let mid_y = BOARD_H / 2.0 - 1.0;
-    let mut x = 4.0;
-    while x < BOARD_W {
-        board.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(x),
-                top: px(mid_y),
-                width: px(10),
-                height: px(2),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.953, 0.902, 0.769, 0.35)),
-            Pickable::IGNORE,
-        ));
-        x += 20.0;
-    }
 }
 
 /// Speed and skip buttons, and the card trace toggle, for the header.
@@ -352,8 +305,8 @@ fn rebuild_replay(
 
 /// A unit standing on the open field: a team-coloured shadow at its feet, the
 /// sprite (bosses bigger), a health bar over its head, and level pips and
-/// status letters at its feet. The outer node is the unit's cell; the sprite
-/// may overhang it.
+/// status letters at its feet. The outer node's bottom centre is the unit's
+/// feet; the sprite and bars may overhang it.
 fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprites: &Sprites) {
     let player = unit.team == Team::Player;
     let shadow = if player {
@@ -363,18 +316,14 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprite
     };
     let size = SPRITE_PX * battle_scale(unit.kind);
     let fill = if player { kit::img::FILL_HP } else { kit::img::FILL_ENEMY };
+    let feet = field::cell_centre(unit.pos);
+    let facing = Facing::from_ground(motion::team_facing(unit.team));
+    let (image, flip) = sprites.facing(unit.kind, facing);
     board
         .spawn((
             UnitView(unit.id),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(cell_left(unit.pos)),
-                top: px(cell_top(unit.pos)),
-                width: px(CELL),
-                height: px(CELL),
-                ..default()
-            },
-            ZIndex(1),
+            field::standing(feet, UNIT_W, UNIT_H),
+            ZIndex(field::depth_z(feet.y)),
             Pickable::IGNORE,
         ))
         .with_children(|v| {
@@ -382,7 +331,7 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprite
             v.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: px((CELL - size * 0.8) / 2.0),
+                    left: px((UNIT_W - size * 0.8) / 2.0),
                     bottom: px(0),
                     width: px(size * 0.8),
                     height: px((size / 5.0).max(12.0)),
@@ -396,22 +345,19 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprite
             v.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: px((CELL - size) / 2.0),
+                    left: px((UNIT_W - size) / 2.0),
                     bottom: px(4),
                     ..default()
                 },
                 Pickable::IGNORE,
             ))
-            .with_child((
-                sprite_node(sprites.unit(unit.kind), battle_scale(unit.kind), !player),
-                UnitSprite(unit.id),
-            ));
+            .with_child((sprite_node(image, battle_scale(unit.kind), flip), UnitSprite(unit.id)));
             // The health bar over its head.
             let bar_w = (size - 12.0).max(52.0);
             v.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: px((CELL - bar_w) / 2.0),
+                    left: px((UNIT_W - bar_w) / 2.0),
                     bottom: px(size + 4.0),
                     width: px(bar_w),
                     ..default()
@@ -551,14 +497,14 @@ const DUST: Color = Color::srgb(0.72, 0.65, 0.55);
 /// Where effects aimed "at" a unit should land: the middle of its sprite,
 /// which for big bosses is well above its feet.
 fn chest(pb: &Playback, id: UnitId) -> Option<Vec2> {
-    let body = pb.bodies.get(&id)?;
+    let feet = *pb.screen.get(&id)?;
     let size = pb.battle.unit(id).map_or(SPRITE_PX * 2.0, |u| SPRITE_PX * battle_scale(u.kind));
-    Some(body.pos + Vec2::new(0.0, CELL / 2.0 - 4.0 - size / 2.0))
+    Some(feet - Vec2::new(0.0, 4.0 + size / 2.0))
 }
 
 /// Where a unit stands, for effects on the ground around it (novas, auras).
 fn feet(pb: &Playback, id: UnitId) -> Option<Vec2> {
-    pb.bodies.get(&id).map(|b| b.pos + Vec2::new(0.0, CELL / 2.0 - 8.0))
+    pb.screen.get(&id).copied()
 }
 
 /// Turns one sim event into animation: badges, floating numbers, lunges and
@@ -607,11 +553,14 @@ fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: 
         Event::AbilityUsed { unit, ability } => show_cast(commands, board, pb, unit, ability),
         Event::Teleported { unit, from, to } => {
             // A puff where it vanished and another where it appears.
-            effects::spray(commands, board, field_centre(from), 10, 90.0, ARCANE);
-            effects::burst(field_centre(from), 26.0).color(ARCANE).life(0.3).spawn(commands, board);
-            motion::teleport(&mut pb.bodies, unit, field_centre(to));
-            effects::burst(field_centre(to), 30.0).color(ARCANE).life(0.35).spawn(commands, board);
-            effects::spray(commands, board, field_centre(to), 10, 70.0, ARCANE);
+            let (a, b) = (field::cell_centre(from), field::cell_centre(to));
+            let up = Vec2::new(0.0, -30.0);
+            effects::spray(commands, board, a + up, 10, 90.0, ARCANE);
+            effects::burst(a + up, 26.0).color(ARCANE).life(0.3).spawn(commands, board);
+            motion::teleport(&mut pb.bodies, unit, field::ground_centre(to));
+            pb.screen.insert(unit, b);
+            effects::burst(b + up, 30.0).color(ARCANE).life(0.35).spawn(commands, board);
+            effects::spray(commands, board, b + up, 10, 70.0, ARCANE);
         }
         Event::TurnSkipped { unit } => {
             if let Some(p) = chest(pb, unit) {
@@ -718,12 +667,12 @@ fn show_cast(commands: &mut Commands, board: Entity, pb: &mut Playback, unit: Un
     pb.anims.entry(unit).or_default().cast = CAST_SECS;
     let (Some(at), Some(ground)) = (chest(pb, unit), feet(pb, unit)) else { return };
     let ring = |from: f32, to: f32, c: Color, life: f32| {
-        effects::ring(ground, from, to).color(c).life(life)
+        effects::ring(ground, from, to).color(c).life(life).flat()
     };
     match a {
         Ability::FrostNova => {
             ring(12.0, CELL * 1.6, ICE, 0.5).spawn(commands, board);
-            effects::burst(ground, CELL * 0.9).color(ICE).life(0.4).spawn(commands, board);
+            effects::burst(ground, CELL * 0.9).color(ICE).life(0.4).flat().spawn(commands, board);
             effects::spray(commands, board, ground, 16, 170.0, ICE);
         }
         Ability::Cleave => ring(14.0, CELL * 1.2, FIRE, 0.3).spawn(commands, board),
@@ -773,7 +722,7 @@ fn show_cast(commands: &mut Commands, board: Entity, pb: &mut Playback, unit: Un
 fn show_status(commands: &mut Commands, board: Entity, pb: &Playback, unit: UnitId, s: StatusKind) {
     let Some(p) = chest(pb, unit) else { return };
     // Bubbles move with the unit, so they are placed relative to its body.
-    let off = pb.bodies.get(&unit).map_or(Vec2::ZERO, |b| p - b.pos);
+    let off = pb.screen.get(&unit).map_or(Vec2::ZERO, |feet| p - *feet);
     match s {
         StatusKind::Shielded => {
             effects::bubble(off, 34.0).color(SHIELD).life(0.9).follow(unit).spawn(commands, board);
@@ -805,7 +754,8 @@ fn move_bodies(time: Res<Time<Real>>, settings: Res<Settings>, mut pb: ResMut<Pl
     // `&mut Playback` lets us borrow two of its fields at once (one mutably),
     // which a borrow through the smart pointer would not allow.
     let pb = &mut *pb;
-    motion::step(&mut pb.bodies, &pb.battle, field_centre, Vec2::new(BOARD_W, BOARD_H), dt);
+    motion::step(&mut pb.bodies, &pb.battle, field::ground_centre, field::ground_size(), dt);
+    pb.screen = project(&pb.bodies);
     pb.clock += dt;
     for anim in pb.anims.values_mut() {
         anim.flash = (anim.flash - dt).max(0.0);
@@ -826,7 +776,7 @@ fn animate_effects(
     mut q: Query<(Entity, &mut Effect, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
 ) {
     let dt = (time.delta_secs() * settings.speed as f32).min(0.1);
-    effects::animate(&mut commands, dt, &pb.bodies, &mut q);
+    effects::animate(&mut commands, dt, &pb.screen, &mut q);
 }
 
 /// Looses a projectile from `from` towards `target`'s body: a gold arrow, or
@@ -838,7 +788,6 @@ fn spawn_projectile(
     target: UnitId,
     mage: bool,
 ) {
-    let from = from - Vec2::new(0.0, 18.0);
     let fill = if mage { Color::srgb(0.910, 0.463, 0.165) } else { color::GOLD_LIGHT };
     commands.entity(board).with_children(|b| {
         b.spawn((
@@ -871,7 +820,7 @@ fn animate_projectiles(
     for (e, mut p, mut node) in &mut q {
         p.age += dt;
         let t = (p.age / PROJECTILE_SECS).min(1.0);
-        let to = pb.bodies.get(&p.target).map_or(p.from, |b| b.pos - Vec2::new(0.0, 18.0));
+        let to = chest(&pb, p.target).unwrap_or(p.from);
         let arc = 4.0 * t * (1.0 - t) * 20.0;
         let at = p.from.lerp(to, t) - Vec2::new(0.0, arc);
         node.left = px(at.x - 4.0);
@@ -950,7 +899,7 @@ fn unit_pose(
     tick: u32,
 ) -> Pose {
     // Lean forwards, the way the sprite faces, so art facing left leans left.
-    let forward = if body.facing_left { -1.0 } else { 1.0 };
+    let forward = if Facing::from_ground(body.facing).is_east() { 1.0 } else { -1.0 };
     if let Some(t) = anim.dead_for.filter(|_| !unit.is_alive()) {
         // Topple over sideways in the first third, then fade out.
         let fall = (t / (DEATH_SECS * 0.35)).min(1.0);
@@ -983,9 +932,10 @@ fn unit_pose(
     Pose { lift: (lift / 2.0).round() * 2.0, lean, tint }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn animate_units(
     pb: Res<Playback>,
+    art: Res<Sprites>,
     mut views: Query<(&UnitView, &mut Node, &mut ZIndex), (Without<HpFill>, Without<Badge>)>,
     mut bars: Query<
         (&HpFill, &mut Node, &mut ImageNode),
@@ -1011,22 +961,28 @@ fn animate_units(
         }
         // Resurrection can bring a unit back.
         node.display = Display::Flex;
-        let Some(body) = pb.bodies.get(&unit.id) else { continue };
+        let (Some(body), Some(feet)) = (pb.bodies.get(&unit.id), pb.screen.get(&unit.id)) else {
+            continue;
+        };
         // A little hop with each step while walking.
         let hop =
             if body.vel.length() > 18.0 { (body.stride / 9.0).sin().abs() * 4.0 } else { 0.0 };
-        node.left = px(snap(body.pos.x - CELL / 2.0));
-        node.top = px(snap(body.pos.y - CELL / 2.0 - hop));
+        node.left = px(snap(feet.x - UNIT_W / 2.0));
+        node.top = px(snap(feet.y - UNIT_H - hop));
         // Units lower on the field are nearer the viewer, so draw them on top.
-        let depth = 1 + (body.pos.y / 4.0) as i32;
+        let depth = field::depth_z(feet.y);
         if z.0 != depth {
             z.0 = depth;
         }
     }
     for (s, mut image, mut transform) in &mut sprites {
         let (Some(body), Some(unit)) = (pb.bodies.get(&s.0), battle.unit(s.0)) else { continue };
-        if image.flip_x != body.facing_left {
-            image.flip_x = body.facing_left;
+        let (handle, flip) = art.facing(unit.kind, Facing::from_ground(body.facing));
+        if image.image != handle {
+            image.image = handle;
+        }
+        if image.flip_x != flip {
+            image.flip_x = flip;
         }
         let anim = pb.anims.get(&s.0).copied().unwrap_or_default();
         let pose = unit_pose(unit, body, &anim, pb.clock, tick);
@@ -1163,6 +1119,8 @@ fn refresh_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use battler_sim::Pos;
+    use battler_sim::run::economy::{BOARD_DEPTH, BOARD_LANES};
     use battler_sim::{Character, Level, Program, UnitSpec};
 
     /// One player unit facing right and one enemy facing left, with bodies.
@@ -1172,7 +1130,7 @@ mod tests {
             let spec = UnitSpec::new(Character::Nettle, Level::One, Program::new(Vec::new()));
             b.spawn(team, Pos::new(x, 3), spec).expect("free cell");
         }
-        let bodies = motion::spawn(&b, field_centre, |_| 22.0);
+        let bodies = motion::spawn(&b, field::ground_centre, |_| 22.0);
         (b, bodies)
     }
 
@@ -1211,7 +1169,8 @@ mod tests {
             let fallen = unit_pose(&dead, body, &end, 0.0, 5);
             assert_eq!(fallen.lean.abs(), 90.0);
             // Facing left (enemies) falls the other way to facing right.
-            assert_eq!(fallen.lean > 0.0, body.facing_left);
+            let east = Facing::from_ground(body.facing).is_east();
+            assert_eq!(fallen.lean > 0.0, !east);
             assert_eq!(fallen.tint.alpha(), 0.0);
         }
     }

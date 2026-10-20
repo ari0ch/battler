@@ -30,6 +30,10 @@ pub mod img {
 
     pub const BANNER: Handle<Image> = uuid_handle!("20d9a4d3-35aa-5883-a7b0-e75f779afd70");
     pub const BAR_FRAME: Handle<Image> = uuid_handle!("4bed89a1-a5dc-5ab7-bd04-dce63d10bc5f");
+    pub const BOARD_BATTLE: Handle<Image> = uuid_handle!("57e83636-2469-4637-b683-3ef909746eac");
+    pub const BOARD_PLANNING: Handle<Image> = uuid_handle!("d7abc897-a61f-42bb-aa95-f824dd914635");
+    pub const TILE_HOVER: Handle<Image> = uuid_handle!("a31b6b1a-249f-4b26-8546-c06be90e365a");
+    pub const TILE_REACH: Handle<Image> = uuid_handle!("ce679cc3-af24-4107-be90-b317b149c031");
     pub const BUTTON: Handle<Image> = uuid_handle!("3853b134-1b49-5e04-b31b-d6a8b5404081");
     pub const BUTTON_GOLD: Handle<Image> = uuid_handle!("eb435f3b-bceb-59a7-8686-82d272da59e2");
     pub const BUTTON_HOVER: Handle<Image> = uuid_handle!("e67d4ab9-9487-5d5a-8659-6222e5ec46df");
@@ -73,6 +77,10 @@ pub mod img {
 const IMAGES: &[(Handle<Image>, &[u8])] = &[
     (img::BANNER, include_bytes!("../assets/ui/banner.png")),
     (img::BAR_FRAME, include_bytes!("../assets/ui/bar_frame.png")),
+    (img::BOARD_BATTLE, include_bytes!("../assets/ui/board_battle.png")),
+    (img::BOARD_PLANNING, include_bytes!("../assets/ui/board_planning.png")),
+    (img::TILE_HOVER, include_bytes!("../assets/ui/tile_hover.png")),
+    (img::TILE_REACH, include_bytes!("../assets/ui/tile_reach.png")),
     (img::BUTTON, include_bytes!("../assets/ui/button.png")),
     (img::BUTTON_GOLD, include_bytes!("../assets/ui/button_gold.png")),
     (img::BUTTON_HOVER, include_bytes!("../assets/ui/button_hover.png")),

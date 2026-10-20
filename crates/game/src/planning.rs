@@ -8,9 +8,10 @@
 //! program panel lying over the right side (docked to a tab when closed); and
 //! the shop along the bottom. Details live in hover tooltips, not on screen.
 //!
-//! The board is drawn rotated from sim coordinates: lanes (`y`) run across the
-//! screen and depth (`x`) up it, the enemy half above yours.
+//! The board is isometric (see `field.rs`): a diamond with your half at the
+//! bottom-left and the enemy's at the top-right.
 
+use battler_sim::monster::mirror;
 use battler_sim::run::economy::{BENCH_SIZE, BOARD_LANES, REROLL_COST, SIDE_DEPTH, XP_COST};
 use battler_sim::run::{Lobby, Location, OwnedUnit, Player, RoundKind};
 use battler_sim::{Class, Level, Pos};
@@ -18,12 +19,10 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::Button;
 
-use crate::battle::{
-    BOARD_H, BOARD_W, CELL, Playback, battle_controls, field_backdrop, spawn_battle_field,
-    spawn_trace_panel,
-};
+use crate::battle::{Playback, battle_controls, spawn_battle_field, spawn_trace_panel};
 use crate::cards;
 use crate::editor::{self, HoveredAbility};
+use crate::field::{self, FIELD_H, FIELD_W, FieldHover};
 use crate::kit;
 use crate::result::{ResultCountdown, ordinal, spawn_result_popup};
 use crate::sprites::{SPRITE_PX, Sprites, battle_scale, sprite_node};
@@ -54,11 +53,12 @@ impl Plugin for PlanningPlugin {
 const INK_GREEN: Color = Color::srgb(0.180, 0.420, 0.180);
 const INK_GOLD: Color = Color::srgb(0.541, 0.353, 0.0);
 
+/// A bench slot.
+const SLOT: f32 = 66.0;
+
 /// The header's and the shop's heights.
 const HEADER_H: f32 = 56.0;
 const SHOP_H: f32 = 104.0;
-/// Grid line width on your half of the field.
-const LINE: f32 = 2.0;
 
 /// Seconds allowed for planning this round.
 pub fn planning_seconds(run: &Player) -> f32 {
@@ -87,9 +87,10 @@ struct ToastText;
 #[derive(Component)]
 struct NoticeBox;
 
-/// A player-side board cell, coloured each frame (hover, reach highlight).
+/// A highlight over one cell of your half: shown on hover, or in blue for
+/// the reach of a hovered ability. Updated each frame.
 #[derive(Component)]
-struct CellView(Pos);
+struct CellMark(Pos);
 
 /// D rerolls, F buys XP, E sells the unit under the pointer, Tab opens or
 /// docks the program panel.
@@ -186,13 +187,14 @@ fn tick_timers(
     }
 }
 
-/// Colours player-side cells: hover feedback, plus the reach of a hovered
-/// signature block around the selected unit.
+/// Highlights cells of your half: the one under the pointer, plus the reach
+/// of a hovered signature block around the selected unit.
 fn update_cells(
     run: Res<GameRun>,
     planning: Res<Planning>,
     hovered_ability: Res<HoveredAbility>,
-    mut cells: Query<(&CellView, &Hovered, &mut BackgroundColor, &mut BorderColor)>,
+    hover: Res<FieldHover>,
+    mut marks: Query<(&CellMark, &mut ImageNode, &mut Visibility)>,
 ) {
     let selected = editor::selected_unit(run.0.me(), &planning);
     let reach = match (hovered_ability.0, selected) {
@@ -201,20 +203,27 @@ fn update_cells(
         }
         _ => None,
     };
-    for (cell, hovered, mut bg, mut border) in &mut cells {
+    for (mark, mut image, mut vis) in &mut marks {
         let in_reach = reach.is_some_and(|(o, r)| {
-            let d = o.distance(cell.0);
+            let d = o.distance(mark.0);
             d > 0 && d <= r
         });
-        let (fill, line) = if in_reach {
-            (color::REACH, color::GRID)
-        } else if hovered.get() {
-            (color::CELL_HOVER, color::GRID)
+        let shown = if in_reach {
+            Some(kit::img::TILE_REACH)
+        } else if hover.0 == Some(mark.0) {
+            Some(kit::img::TILE_HOVER)
         } else {
-            (color::CELL, color::GRID)
+            None
         };
-        bg.0 = fill;
-        border.set_all(line);
+        let want = if shown.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        if let Some(handle) = shown
+            && image.image != handle
+        {
+            image.image = handle;
+        }
     }
 }
 
@@ -263,19 +272,23 @@ fn rebuild(
                     bench_grid(left, run, &planning, &sprites);
                 });
                 // Centre: the battlefield, with an arrow pointing at the enemy.
-                body.spawn(Node {
-                    position_type: PositionType::Absolute,
-                    left: px((ui::STAGE_W - BOARD_W) / 2.0),
-                    top: px(2),
-                    align_items: AlignItems::Center,
-                    ..column(4.0)
-                })
+                body.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px((ui::STAGE_W - FIELD_W) / 2.0),
+                        top: px(36),
+                        width: px(FIELD_W),
+                        height: px(FIELD_H),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
                 .with_children(|mid| {
-                    up_arrow(mid, lobby, battle);
                     match battle {
                         Some(pb) => spawn_battle_field(mid, &pb.battle, &sprites),
                         None => planning_field(mid, lobby, &planning, &sprites),
                     }
+                    up_arrow(mid, lobby, battle);
                 });
                 // Right: the players.
                 body.spawn(Node {
@@ -887,7 +900,7 @@ fn bench_grid(
     parent
         .spawn(Node {
             display: Display::Grid,
-            grid_template_columns: RepeatedGridTrack::px(3, CELL),
+            grid_template_columns: RepeatedGridTrack::px(3, SLOT),
             row_gap: px(6),
             column_gap: px(6),
             ..default()
@@ -897,7 +910,7 @@ fn bench_grid(
                 grid.spawn(ui::button(
                     UiAction::ClickBench(i),
                     ui::ButtonStyle::flat(Color::NONE, color::CELL_HOVER, Color::NONE),
-                    Node { width: px(CELL), height: px(CELL), ..default() },
+                    Node { width: px(SLOT), height: px(SLOT), ..default() },
                 ))
                 // A carved wooden slot; the flat style only adds a hover glow.
                 .insert((DropTarget::Bench(i), kit::inset()))
@@ -906,14 +919,15 @@ fn bench_grid(
                     let loc = Location::Bench(i);
                     if let Some(unit) = run.unit_at(loc) {
                         let selected = planning.selected == Some(unit.id);
-                        unit_tile(slot, run, unit, loc, CELL, selected, sprites);
+                        unit_tile(slot, run, unit, loc, SLOT, selected, sprites);
                     }
                 });
             }
         });
 }
 
-/// An arrow above the field pointing at the enemy side; hover for who it is.
+/// An arrow off the board's top-right edge pointing at the enemy side; hover
+/// for who it is.
 fn up_arrow(parent: &mut ChildSpawnerCommands, lobby: &Lobby, battle: Option<&Playback>) {
     let (title, lines) = match battle.and_then(|pb| pb.opponent) {
         Some(o) => (format!("vs {}", cards::opponent_label(lobby, o)), vec![]),
@@ -927,16 +941,21 @@ fn up_arrow(parent: &mut ChildSpawnerCommands, lobby: &Lobby, battle: Option<&Pl
             ),
         },
     };
+    let (node, transform) = field::arrow_node();
     parent.spawn((
         ImageNode::new(kit::img::ICON_ARROW_UP),
-        Node { width: px(24), height: px(24), ..default() },
+        node,
+        transform,
+        ZIndex(500),
         Hovered::default(),
         ui::Tooltip { title, accent: color::RED_TEXT, lines },
     ));
 }
 
-/// The battlefield while planning: the same grass field as in battle, with
-/// grid lines over your half and a preview of the next opponent in theirs.
+/// The battlefield while planning: the isometric board with grid lines over
+/// your half and the next opponent, faded, on theirs. One picker underneath
+/// turns the pointer into a cell (hover, click, drop); units stand on it and
+/// can be clicked, dragged and hovered themselves.
 fn planning_field(
     parent: &mut ChildSpawnerCommands,
     lobby: &Lobby,
@@ -944,112 +963,143 @@ fn planning_field(
     sprites: &Sprites,
 ) {
     let run = lobby.me();
+    let own_cells = || (0..SIDE_DEPTH).flat_map(|x| (0..BOARD_LANES).map(move |y| Pos::new(x, y)));
     parent
         .spawn((
-            Node { width: px(BOARD_W), height: px(BOARD_H), flex_shrink: 0.0, ..default() },
-            kit::tiled(kit::img::FIELD_GRASS, true, true),
-            Outline { width: px(4), offset: px(0), color: color::LINE_STRONG },
+            Node { width: px(FIELD_W), height: px(FIELD_H), flex_shrink: 0.0, ..default() },
+            Pickable::IGNORE,
         ))
-        .with_children(|field| {
-            field_backdrop(field);
-            enemy_preview(field, lobby, sprites);
-            // Your half: rows of droppable cells, front row first.
-            field
-                .spawn(Node {
-                    position_type: PositionType::Absolute,
-                    left: px(0),
-                    top: px(BOARD_H / 2.0),
-                    ..column(0.0)
-                })
-                .with_children(|half| {
-                    for x in (0..SIDE_DEPTH).rev() {
-                        half.spawn(row(0.0)).with_children(|cells| {
-                            for y in 0..BOARD_LANES {
-                                let pos = Pos::new(x, y);
-                                cells
-                                    .spawn((
-                                        Button,
-                                        Hovered::default(),
-                                        Clickable(UiAction::ClickCell(pos)),
-                                        DropTarget::Cell(pos),
-                                        CellView(pos),
-                                        Node {
-                                            width: px(CELL),
-                                            height: px(CELL),
-                                            align_items: AlignItems::Center,
-                                            justify_content: JustifyContent::Center,
-                                            border: UiRect::new(
-                                                px(if y == 0 { 0.0 } else { LINE / 2.0 }),
-                                                px(LINE / 2.0),
-                                                px(LINE / 2.0),
-                                                px(LINE / 2.0),
-                                            ),
-                                            ..default()
-                                        },
-                                        BackgroundColor(color::CELL),
-                                        BorderColor::all(color::GRID),
-                                    ))
-                                    .with_children(|cell| {
-                                        let loc = Location::Board(pos);
-                                        if let Some(unit) = run.unit_at(loc) {
-                                            let selected = planning.selected == Some(unit.id);
-                                            unit_tile(
-                                                cell, run, unit, loc, CELL, selected, sprites,
-                                            );
-                                        }
-                                    });
-                            }
-                        });
-                    }
-                });
+        .with_children(|f| {
+            field::spawn_board(f, true);
+            for pos in own_cells() {
+                f.spawn((
+                    ImageNode::new(kit::img::TILE_HOVER),
+                    field::tile_node(pos),
+                    Visibility::Hidden,
+                    CellMark(pos),
+                    Pickable::IGNORE,
+                ));
+            }
+            field::spawn_picker(f);
+            enemy_preview(f, lobby, sprites);
+            for pos in own_cells() {
+                if let Some(unit) = run.unit_at(Location::Board(pos)) {
+                    let selected = planning.selected == Some(unit.id);
+                    board_unit(f, run, unit, pos, selected, sprites);
+                }
+            }
         });
 }
 
-/// The next opponent in the enemy half: a PvE wave stands where it will fight,
-/// slightly faded; a versus round just says so.
-fn enemy_preview(field: &mut ChildSpawnerCommands, lobby: &Lobby, sprites: &Sprites) {
+/// A unit standing on your half while planning, facing the camera: a shadow
+/// ring (gold when selected), the sprite, and level pips and card dots at its
+/// feet. Drag it, click it to edit its program, hover for its tooltip.
+fn board_unit(
+    f: &mut ChildSpawnerCommands,
+    run: &Player,
+    unit: &OwnedUnit,
+    pos: Pos,
+    selected: bool,
+    sprites: &Sprites,
+) {
+    let c = unit.character;
+    let loc = Location::Board(pos);
+    let max = run.synergies().card_slots(c, unit.level);
+    let feet = field::cell_centre(pos);
+    let size = SPRITE_PX * 2.0;
+    let ring = if selected { color::GOLD_LIGHT } else { Color::srgba(0.314, 0.588, 1.0, 0.8) };
+    f.spawn((
+        Button,
+        Hovered::default(),
+        Clickable(UiAction::SelectUnit(loc)),
+        DragSource::Unit(loc),
+        DropTarget::Cell(pos),
+        // Let the pointer through to the field picker below (drops, hover).
+        Pickable { should_block_lower: false, is_hoverable: true },
+        GlobalZIndex::default(),
+        ZIndex(field::depth_z(feet.y)),
+        field::standing(feet + Vec2::new(0.0, 8.0), size, size + 8.0),
+        cards::unit_tooltip(
+            c,
+            Some(unit.level),
+            Some(format!("Sells for {} gold (E)", unit.sell_value())),
+        ),
+    ))
+    .with_children(|u| {
+        u.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(size * 0.1),
+                bottom: px(2),
+                width: px(size * 0.8),
+                height: px(14),
+                border: UiRect::all(px(if selected { 3.0 } else { 2.0 })),
+                border_radius: BorderRadius::all(percent(50)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.08, 0.12, 0.08, 0.45)),
+            BorderColor::all(ring),
+            Pickable::IGNORE,
+        ));
+        u.spawn((
+            Node { position_type: PositionType::Absolute, left: px(0), bottom: px(8), ..default() },
+            Pickable::IGNORE,
+        ))
+        .with_child(sprite_node(sprites.character(c), 2.0, false));
+        u.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(6),
+                right: px(6),
+                bottom: px(-8),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .with_children(|foot| {
+            spawn_pips(foot, unit.level);
+            spawn_card_dots(foot, unit.program.len(), max);
+        });
+    });
+}
+
+/// The next opponent on the enemy half: a PvE wave stands where it will
+/// fight, faded and facing you; a versus round just says so.
+fn enemy_preview(f: &mut ChildSpawnerCommands, lobby: &Lobby, sprites: &Sprites) {
     match lobby.round_kind() {
         RoundKind::Pve(wave) => {
             for (pos, spec) in wave.units() {
-                // Wave positions are written as if for the left side; the
-                // battle mirrors them, which puts row `x` at screen row `x`.
-                let scale = battle_scale(spec.kind);
-                let size = SPRITE_PX * scale;
-                let left = pos.y as f32 * CELL + (CELL - size) / 2.0;
-                let top = (pos.x as f32 + 1.0) * CELL - size - 4.0;
-                field.spawn((
+                let feet = field::cell_centre(mirror(pos));
+                let size = SPRITE_PX * battle_scale(spec.kind);
+                f.spawn((
                     ImageNode {
                         image: sprites.unit(spec.kind),
                         flip_x: true,
-                        color: Color::srgba(1.0, 1.0, 1.0, 0.85),
+                        color: Color::srgba(1.0, 1.0, 1.0, 0.7),
                         ..default()
                     },
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(left),
-                        top: px(top),
-                        width: px(size),
-                        height: px(size),
-                        ..default()
-                    },
+                    field::standing(feet - Vec2::new(0.0, 4.0), size, size),
+                    ZIndex(field::depth_z(feet.y)),
                     Pickable::IGNORE,
                 ));
             }
         }
         RoundKind::Versus => {
-            field
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(0),
-                        right: px(0),
-                        top: px(BOARD_H / 4.0 - 12.0),
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },
-                    Pickable::IGNORE,
-                ))
-                .with_child(ui::outlined("Versus", 22.0, color::RED_TEXT));
+            let at = field::cell_centre(Pos::new(6, 3));
+            f.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(at.x - 60.0),
+                    top: px(at.y - 14.0),
+                    width: px(120),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .with_child(ui::outlined("Versus", 22.0, color::RED_TEXT));
         }
     }
 }

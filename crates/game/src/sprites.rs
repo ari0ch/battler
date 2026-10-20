@@ -1,5 +1,11 @@
-//! Character and monster sprites: 32x32 pixel art facing right, drawn at whole-number
-//! scales with nearest-neighbour sampling so the pixels stay crisp.
+//! Character and monster sprites: 32x32 pixel art, drawn at whole-number scales
+//! with nearest-neighbour sampling so the pixels stay crisp.
+//!
+//! The roster art faces right in a front three-quarter view, which on the
+//! isometric field is south-east (towards the camera); mirrored, it is
+//! south-west. Characters also have back art (`assets/sprites/back`) for
+//! north-east, mirrored for north-west. Monsters (always the enemy, so mostly
+//! facing you) show their front from every side for now.
 //!
 //! The PNGs are embedded in the binary with `include_bytes!` rather than loaded
 //! through the `AssetServer`. They are tiny (about 4 KB each), and embedding
@@ -11,6 +17,8 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 
+use crate::field::Facing;
+
 /// The sprite's size in source pixels.
 pub const SPRITE_PX: f32 = 32.0;
 
@@ -20,6 +28,8 @@ pub const SPRITE_PX: f32 = 32.0;
 pub struct Sprites {
     characters: Vec<Handle<Image>>,
     monsters: Vec<Handle<Image>>,
+    /// Back views (facing north-east); same indexing as `characters`.
+    character_backs: Vec<Handle<Image>>,
 }
 
 impl Sprites {
@@ -38,6 +48,19 @@ impl Sprites {
             UnitKind::Character(c) => self.character(c),
             UnitKind::Monster(m) => self.monster(m),
         }
+    }
+
+    /// The image and mirroring that show `kind` facing `facing`: the back art
+    /// for the two northern facings when there is some, else the front.
+    pub fn facing(&self, kind: UnitKind, facing: Facing) -> (Handle<Image>, bool) {
+        let back = match kind {
+            UnitKind::Character(c) if facing.is_north() => {
+                Some(self.character_backs[c.index()].clone())
+            }
+            _ => None,
+        };
+        // Both views are drawn facing east; west is the mirror image.
+        (back.unwrap_or_else(|| self.unit(kind)), !facing.is_east())
     }
 }
 
@@ -72,7 +95,9 @@ impl FromWorld for Sprites {
         let characters =
             Character::ALL.into_iter().map(|c| load(c.name(), character_png(c))).collect();
         let monsters = Monster::ALL.into_iter().map(|m| load(m.name(), monster_png(m))).collect();
-        Self { characters, monsters }
+        let character_backs =
+            Character::ALL.into_iter().map(|c| load(c.name(), character_back_png(c))).collect();
+        Self { characters, monsters, character_backs }
     }
 }
 
@@ -99,6 +124,32 @@ fn character_png(c: Character) -> &'static [u8] {
         Grub => include_bytes!("../assets/sprites/grub_ironjaw.png"),
         Hilda => include_bytes!("../assets/sprites/hilda_bloodaxe.png"),
         Korgath => include_bytes!("../assets/sprites/korgath_the_undying.png"),
+    }
+}
+
+/// Each character seen from behind (facing north-east), for walking away
+/// from the camera. Exhaustive like the fronts.
+fn character_back_png(c: Character) -> &'static [u8] {
+    use Character::*;
+    match c {
+        BramGatewarden => include_bytes!("../assets/sprites/back/bram_gatewarden.png"),
+        SirAldric => include_bytes!("../assets/sprites/back/sir_aldric.png"),
+        Ysolde => include_bytes!("../assets/sprites/back/ysolde_the_unbroken.png"),
+        PipQuickfeather => include_bytes!("../assets/sprites/back/pip_quickfeather.png"),
+        Kestrel => include_bytes!("../assets/sprites/back/kestrel.png"),
+        Elowen => include_bytes!("../assets/sprites/back/elowen_starshot.png"),
+        Tobble => include_bytes!("../assets/sprites/back/tobble_the_apprentice.png"),
+        Mirelle => include_bytes!("../assets/sprites/back/mirelle_frostweaver.png"),
+        Vorn => include_bytes!("../assets/sprites/back/archmage_vorn.png"),
+        SisterAgnes => include_bytes!("../assets/sprites/back/sister_agnes.png"),
+        BrotherCalloway => include_bytes!("../assets/sprites/back/brother_calloway.png"),
+        Seraphine => include_bytes!("../assets/sprites/back/seraphine_dawnbringer.png"),
+        Nettle => include_bytes!("../assets/sprites/back/nettle.png"),
+        Vex => include_bytes!("../assets/sprites/back/vex.png"),
+        GreyWidow => include_bytes!("../assets/sprites/back/the_grey_widow.png"),
+        Grub => include_bytes!("../assets/sprites/back/grub_ironjaw.png"),
+        Hilda => include_bytes!("../assets/sprites/back/hilda_bloodaxe.png"),
+        Korgath => include_bytes!("../assets/sprites/back/korgath_the_undying.png"),
     }
 }
 

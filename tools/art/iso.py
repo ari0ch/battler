@@ -117,6 +117,9 @@ BACKS = {
     "mirelle_frostweaver": mirelle_back,
     "elowen_starshot": elowen_back,
 }
+# The rest of the roster, built from shared parts.
+from iso_backs import BACKS as _MORE  # noqa: E402
+BACKS.update(_MORE)
 
 
 def roster(name):

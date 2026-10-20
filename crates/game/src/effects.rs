@@ -4,15 +4,14 @@
 //! Effects are presentation only. Each is spawned as a child of the battle
 //! field (so it is cleaned up with it) with an [`Effect`] component that
 //! [`animate`] advances every frame in playback time, so they speed up with the
-//! 2x and 4x buttons. Positions are field pixels, the same space as the unit
-//! bodies in `motion.rs`; an effect can follow a unit's body as it moves.
+//! 2x and 4x buttons. Positions are pixels on the isometric field; an effect
+//! can follow a unit (relative to its feet) as it moves. Effects on the ground
+//! are `flat`: circles squashed to half height so they lie on the diamond.
 
 use std::collections::HashMap;
 
 use battler_sim::UnitId;
 use bevy::prelude::*;
-
-use crate::motion::Body;
 
 /// Effects draw above units (whose stacking order tops out around 150) but
 /// below projectiles and floating numbers.
@@ -38,6 +37,8 @@ pub struct Effect {
     /// Where it is, or its offset from the followed unit.
     at: Vec2,
     follow: Option<UnitId>,
+    /// Lies on the ground: drawn half as tall as wide.
+    flat: bool,
     /// Seconds before it appears (e.g. an explosion waits for the projectile).
     delay: f32,
     age: f32,
@@ -55,6 +56,7 @@ fn new(kind: Kind, at: Vec2) -> EffectBuilder {
         color: Color::WHITE,
         at,
         follow: None,
+        flat: false,
         delay: 0.0,
         age: 0.0,
         life: 0.4,
@@ -85,6 +87,11 @@ impl EffectBuilder {
     }
     pub fn delay(mut self, secs: f32) -> Self {
         self.0.delay = secs;
+        self
+    }
+    /// Lies on the ground (rings and novas around a unit's feet).
+    pub fn flat(mut self) -> Self {
+        self.0.flat = true;
         self
     }
     /// Moves with a unit: `at` becomes an offset from that unit's body.
@@ -125,7 +132,7 @@ pub fn sparkles(commands: &mut Commands, board: Entity, unit: UnitId, color: Col
     for i in 0..6 {
         let x = (i as f32 - 2.5) * 7.0;
         let vel = Vec2::new(x * 0.6, -50.0 - (i % 3) as f32 * 14.0);
-        particle(Vec2::new(x, -10.0), vel, 0.0, 5.0)
+        particle(Vec2::new(x, -40.0), vel, 0.0, 5.0)
             .color(color)
             .life(0.6)
             .delay(i as f32 * 0.04)
@@ -138,7 +145,7 @@ pub fn sparkles(commands: &mut Commands, board: Entity, unit: UnitId, color: Col
 pub fn animate(
     commands: &mut Commands,
     dt: f32,
-    bodies: &HashMap<UnitId, Body>,
+    feet: &HashMap<UnitId, Vec2>,
     q: &mut Query<(Entity, &mut Effect, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
 ) {
     for (e, mut fx, mut node, mut bg, mut border) in q.iter_mut() {
@@ -153,7 +160,7 @@ pub fn animate(
             continue;
         }
         let origin = match fx.follow {
-            Some(id) => bodies.get(&id).map_or(fx.at, |b| b.pos + fx.at),
+            Some(id) => feet.get(&id).map_or(fx.at, |f| *f + fx.at),
             None => fx.at,
         };
         // Ease out: fast at first, settling at the end.
@@ -163,19 +170,19 @@ pub fn animate(
         match fx.kind {
             Kind::Ring { from, to, width } => {
                 let r = from + (to - from) * ease;
-                place_circle(&mut node, origin, r);
+                place_circle(&mut node, origin, r, fx.flat);
                 node.border = UiRect::all(px(width));
                 bg.0 = Color::NONE;
                 border.set_all(fx.color.with_alpha(fade));
             }
             Kind::Burst { to } => {
-                place_circle(&mut node, origin, to * ease);
+                place_circle(&mut node, origin, to * ease, fx.flat);
                 bg.0 = fx.color.with_alpha(0.75 * fade);
             }
             Kind::Bubble { radius } => {
                 // Pops in, holds, then fades.
                 let r = radius * (0.6 + 0.4 * (t * 4.0).min(1.0));
-                place_circle(&mut node, origin, r);
+                place_circle(&mut node, origin, r, fx.flat);
                 node.border = UiRect::all(px(2));
                 bg.0 = fx.color.with_alpha(0.25 * fade);
                 border.set_all(fx.color.with_alpha(0.9 * fade));
@@ -193,11 +200,14 @@ pub fn animate(
     }
 }
 
-fn place_circle(node: &mut Node, centre: Vec2, r: f32) {
+/// Sizes a node as a circle of radius `r` around `centre`, or for a `flat`
+/// effect an ellipse half as tall (a circle on the ground, seen at an angle).
+fn place_circle(node: &mut Node, centre: Vec2, r: f32, flat: bool) {
     let r = r.max(1.0);
+    let ry = if flat { r / 2.0 } else { r };
     node.left = px(centre.x - r);
-    node.top = px(centre.y - r);
+    node.top = px(centre.y - ry);
     node.width = px(r * 2.0);
-    node.height = px(r * 2.0);
+    node.height = px(ry * 2.0);
     node.border_radius = BorderRadius::all(percent(50));
 }

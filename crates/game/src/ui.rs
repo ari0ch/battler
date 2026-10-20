@@ -29,9 +29,6 @@ pub mod color {
     pub const BG_DEEP: Color = Color::srgb(0.078, 0.067, 0.125);
     pub const PANEL_2: Color = Color::srgb(0.227, 0.192, 0.314);
     pub const LINE_STRONG: Color = Color::srgb(0.361, 0.227, 0.133);
-    pub const CELL: Color = Color::srgba(0.0, 0.0, 0.0, 0.0);
-    /// Grid lines drawn over the grass board.
-    pub const GRID: Color = Color::srgba(0.102, 0.078, 0.149, 0.45);
     pub const CELL_HOVER: Color = Color::srgba(1.0, 0.95, 0.8, 0.18);
     pub const TEXT: Color = Color::srgb(0.953, 0.902, 0.769);
     pub const MUTED: Color = Color::srgb(0.804, 0.718, 0.561);
@@ -56,7 +53,6 @@ pub mod color {
     pub const ACT_TEXT: Color = Color::srgb(0.227, 0.102, 0.016);
     pub const SIG_LINE: Color = Color::srgb(0.604, 0.478, 0.769);
     pub const SIG_TEXT: Color = Color::srgb(0.965, 0.933, 1.0);
-    pub const REACH: Color = Color::srgba(0.604, 0.478, 0.769, 0.35);
     pub const COMMON: Color = Color::srgb(0.906, 0.827, 0.659);
     pub const RARE: Color = Color::srgb(0.486, 0.776, 0.878);
     pub const EPIC: Color = Color::srgb(0.851, 0.651, 1.0);
@@ -90,6 +86,9 @@ pub enum DragSource {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DropTarget {
     Cell(Pos),
+    /// A cell found from where the pointer is on the isometric field (see
+    /// `field::FieldPicker`). A drop straight onto a unit (`Cell`) wins.
+    Field(Pos),
     Bench(usize),
     Sell,
     /// A program card, by index (one past the end starts a new card).

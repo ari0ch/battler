@@ -32,6 +32,14 @@ pub fn apply_actions(
     if actions.iter().any(|a| matches!(a, UiAction::SelectUnit(_))) {
         actions.retain(|a| !matches!(a, UiAction::ClickCell(_) | UiAction::ClickBench(_)));
     }
+    // The field picker may report the same click more than once.
+    actions.dedup();
+    // A drop onto a unit standing on the field also lands on the field under
+    // the pointer, which may be the cell behind it (sprites are taller than
+    // their tile). The unit's own cell wins.
+    if actions.iter().any(|a| matches!(a, UiAction::Drop(_, DropTarget::Cell(_)))) {
+        actions.retain(|a| !matches!(a, UiAction::Drop(_, DropTarget::Field(_))));
+    }
 
     for action in actions {
         rev.bump();
@@ -164,7 +172,7 @@ fn planning_action(
         UiAction::ClearCard(card) => editor::clear_card(lobby, planning, card),
         UiAction::CardUp(card) => editor::card_up(lobby, planning, card),
         UiAction::Drop(source, target) => match (source, target) {
-            (DragSource::Unit(from), DropTarget::Cell(p)) => {
+            (DragSource::Unit(from), DropTarget::Cell(p) | DropTarget::Field(p)) => {
                 let to = Location::Board(p);
                 if report(planning, lobby.act(Command::Move { from, to })).is_some() {
                     planning.selected = lobby.me().unit_at(to).map(|u| u.id);

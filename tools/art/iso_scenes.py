@@ -266,7 +266,31 @@ def planning():
     return img
 
 
+def tile_overlay(fill, edge):
+    """A one-tile diamond overlay (hover, reach) at 1x."""
+    img = Image.new("RGBA", (TW, TH), (0, 0, 0, 0))
+    for row in range(TH):
+        half = 2 * (row + 1) if row < TH // 2 else 2 * (TH - row)
+        for x in range(TW // 2 - half, TW // 2 + half):
+            img.putpixel((x, row), fill)
+        for x in (TW // 2 - half, TW // 2 - half + 1, TW // 2 + half - 2, TW // 2 + half - 1):
+            img.putpixel((x, row), edge)
+    return img
+
+
+def export(dest):
+    """The game's board pieces: both boards cropped to the diamond and its slab
+    (360 x 192 at 1x; the top corner is at the top edge) and the overlays."""
+    top = ORIGIN[1] - 12 * DEPTH
+    box = (0, top, W, top + 180 + THICK + 2)
+    board("battle").crop(box).save(os.path.join(dest, "board_battle.png"))
+    board("planning").crop(box).save(os.path.join(dest, "board_planning.png"))
+    tile_overlay((255, 240, 170, 80), (255, 240, 170, 200)).save(os.path.join(dest, "tile_hover.png"))
+    tile_overlay((120, 190, 255, 80), (150, 210, 255, 200)).save(os.path.join(dest, "tile_reach.png"))
+
+
 if __name__ == "__main__":
+    export(OUT)
     battle().save(os.path.join(OUT, "iso_battle.png"))
     planning().save(os.path.join(OUT, "iso_planning.png"))
     print("ok")
