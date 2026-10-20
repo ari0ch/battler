@@ -129,6 +129,8 @@ pub enum UiAction {
     CopyLink,
     Buy(usize),
     Reroll,
+    /// Lock or unlock the shop (it keeps its offers into the next round).
+    ToggleShopLock,
     Ready,
     BuyXp,
     SelectUnit(Location),

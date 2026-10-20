@@ -63,6 +63,7 @@ pub mod img {
     pub const ICON_HELM: Handle<Image> = uuid_handle!("93b578fb-1696-5fc8-bfc5-8126324ae364");
     pub const ICON_HOLY: Handle<Image> = uuid_handle!("d356a645-1adb-5baf-8b42-082fdab81a0b");
     pub const ICON_HOURGLASS: Handle<Image> = uuid_handle!("e76c3e35-c5cf-5f33-98f1-1c0cdf14eb0b");
+    pub const ICON_LOCK: Handle<Image> = uuid_handle!("619f7b65-b1f6-446d-9975-21693395159c");
     pub const ICON_SKULL: Handle<Image> = uuid_handle!("09201c26-8039-5a82-b0c0-8476be91815d");
     pub const ICON_STAFF: Handle<Image> = uuid_handle!("2610334e-48cd-53c5-aeba-c6b174ab1343");
     pub const ICON_STAR: Handle<Image> = uuid_handle!("c53718bb-820b-544e-9b56-9f74b416b462");
@@ -110,6 +111,7 @@ const IMAGES: &[(Handle<Image>, &[u8])] = &[
     (img::ICON_HELM, include_bytes!("../assets/ui/icon_helm.png")),
     (img::ICON_HOLY, include_bytes!("../assets/ui/icon_holy.png")),
     (img::ICON_HOURGLASS, include_bytes!("../assets/ui/icon_hourglass.png")),
+    (img::ICON_LOCK, include_bytes!("../assets/ui/icon_lock.png")),
     (img::ICON_SKULL, include_bytes!("../assets/ui/icon_skull.png")),
     (img::ICON_STAFF, include_bytes!("../assets/ui/icon_staff.png")),
     (img::ICON_STAR, include_bytes!("../assets/ui/icon_star.png")),

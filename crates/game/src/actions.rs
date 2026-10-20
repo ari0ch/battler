@@ -199,6 +199,10 @@ fn planning_action(
         UiAction::Reroll => {
             report(planning, run.act(Command::Reroll));
         }
+        UiAction::ToggleShopLock => {
+            let locked = !run.me().shop_locked();
+            report(planning, run.act(Command::LockShop(locked)));
+        }
         UiAction::Ready => {
             if let Some(online) = run.online.as_mut() {
                 // Online, the server starts the round once everyone is ready.

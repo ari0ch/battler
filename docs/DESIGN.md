@@ -202,6 +202,11 @@ All numbers in this section and the next are agreed starting points, to tune aft
   run's seeded RNG.
 - **Programs persist between rounds.** Click any unit (board or bench) to edit its cards.
 
+**Shop lock (Oct 2026).** A lock button beside Reroll (hotkey L) keeps the shop's
+offers into the next round instead of refreshing them; slots already bought stay empty.
+The lock stays on until clicked off. Rerolling still works while locked (and keeps the
+lock). It's a `Command::LockShop(bool)`, so it works the same online.
+
 ### Economy
 
 - Start with **10 gold**.

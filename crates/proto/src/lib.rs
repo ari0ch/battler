@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped whenever a message changes shape, so an old page gets a clear
 /// "please reload" instead of garbled messages.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Players per room (the lobby's size): empty seats are filled by bots.
 pub const MAX_PLAYERS: usize = battler_sim::run::economy::LOBBY_SIZE;

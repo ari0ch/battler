@@ -426,6 +426,20 @@ KKKKGGGGKKKK
 ..KK........
 ............
 """,
+ 'lock': """
+....KKKK....
+...KLMMLK...
+..KMK..KMK..
+..KMK..KMK..
+.KKKKKKKKKK.
+.KYYGGGGGgK.
+.KYGGKKGGgK.
+.KYGGKKGGgK.
+.KYGGGKGGgK.
+.KYGGGGGGgK.
+.KKKKKKKKKK.
+............
+""",
 }
 def icon(name, text):
     rows = [r for r in text.strip('\n').split('\n')]

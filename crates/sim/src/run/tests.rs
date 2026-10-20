@@ -631,3 +631,35 @@ fn resolving_without_a_round_is_refused() {
     assert!(ticks > 0);
     assert_eq!(lobby.step(&Step::Resolve), Ok(None));
 }
+
+// ----- Shop lock ---------------------------------------------------------------
+
+#[test]
+fn a_locked_shop_keeps_its_offers_into_the_next_round() {
+    let mut lobby = Lobby::with_seats(21, &[Seat::human("Ari")]);
+    lobby.apply(ME, Command::Buy(0)).unwrap();
+    lobby.apply(ME, Command::LockShop(true)).unwrap();
+    let before = lobby.player(ME).shop().to_vec();
+    assert!(before[0].is_none(), "the bought slot is empty");
+    lobby.start_round().unwrap();
+    lobby.resolve();
+    assert_eq!(lobby.player(ME).shop(), &before[..], "same offers, same empty slot");
+    assert!(lobby.player(ME).shop_locked(), "the lock stays on");
+}
+
+#[test]
+fn an_unlocked_shop_refreshes_and_rerolling_still_works_while_locked() {
+    let mut lobby = Lobby::with_seats(22, &[Seat::human("Ari")]);
+    lobby.apply(ME, Command::Buy(0)).unwrap();
+    lobby.start_round().unwrap();
+    lobby.resolve();
+    assert!(lobby.player(ME).shop().iter().all(Option::is_some), "a fresh shop");
+    // Locked, a reroll still replaces the offers, and the lock stays.
+    lobby.apply(ME, Command::LockShop(true)).unwrap();
+    let before = lobby.player(ME).shop().to_vec();
+    lobby.apply(ME, Command::Reroll).unwrap();
+    assert!(lobby.player(ME).shop_locked());
+    assert_eq!(lobby.player(ME).shop().len(), before.len());
+    lobby.apply(ME, Command::LockShop(false)).unwrap();
+    assert!(!lobby.player(ME).shop_locked());
+}
