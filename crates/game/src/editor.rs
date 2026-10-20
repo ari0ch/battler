@@ -424,7 +424,6 @@ fn chip(parent: &mut ChildSpawnerCommands, block: Block, unlocks: &Unlocks, char
         Clickable(UiAction::PaletteBlock(block)),
         DragSource::Block(block),
         Pickable { should_block_lower: false, is_hoverable: true },
-        GlobalZIndex::default(),
         node,
         kit::sliced(image.clone(), 4.0).with_color(dim),
         ui::HoverSkin { normal: (image.clone(), dim), hover: (image, Color::WHITE) },

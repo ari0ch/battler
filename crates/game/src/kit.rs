@@ -148,18 +148,26 @@ impl Plugin for KitPlugin {
 
 /// A 9-slice image: corners of `border` source pixels stay sharp at
 /// [`SCALE`]x, edges and centre stretch. The node's own size sets the size.
+///
+/// It fills the node's whole border box. Bevy 0.20 draws an `ImageNode` in the
+/// *content* box by default (inside the padding), which would shrink a frame
+/// onto the very text its padding is meant to keep clear of it.
 pub fn sliced(image: Handle<Image>, border: f32) -> ImageNode {
-    ImageNode::new(image).with_mode(NodeImageMode::Sliced(TextureSlicer {
-        border: BorderRect::all(border),
-        center_scale_mode: SliceScaleMode::Stretch,
-        sides_scale_mode: SliceScaleMode::Stretch,
-        max_corner_scale: SCALE,
-    }))
+    ImageNode::new(image)
+        .with_mode(NodeImageMode::Sliced(TextureSlicer {
+            border: BorderRect::all(border),
+            center_scale_mode: SliceScaleMode::Stretch,
+            sides_scale_mode: SliceScaleMode::Stretch,
+            max_corner_scale: SCALE,
+        }))
+        .with_visual_box(VisualBox::BorderBox)
 }
 
-/// A texture repeated across the node at [`SCALE`]x.
+/// A texture repeated across the node's whole border box at [`SCALE`]x.
 pub fn tiled(image: Handle<Image>, tile_x: bool, tile_y: bool) -> ImageNode {
-    ImageNode::new(image).with_mode(NodeImageMode::Tiled { tile_x, tile_y, stretch_value: SCALE })
+    ImageNode::new(image)
+        .with_mode(NodeImageMode::Tiled { tile_x, tile_y, stretch_value: SCALE })
+        .with_visual_box(VisualBox::BorderBox)
 }
 
 /// A square icon of `size` UI pixels that ignores the pointer.

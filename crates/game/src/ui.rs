@@ -180,12 +180,19 @@ fn on_activate(ev: On<Activate>, clickables: Query<&Clickable>, mut queue: ResMu
     }
 }
 
+/// Lifts a dragged element above everything else while it moves.
+///
+/// `GlobalZIndex` takes a node out of its parent's stacking order and sorts it
+/// among the top-level nodes instead, so it is only added for the drag: left
+/// on at rest (even as 0), it would sink draggables under raised panels like
+/// the program overlay and undo the depth order of units on the field.
 fn on_drag_start(
     ev: On<bevy::picking::events::PointerDragStart>,
-    mut q: Query<&mut GlobalZIndex, With<DragSource>>,
+    q: Query<(), With<DragSource>>,
+    mut commands: Commands,
 ) {
-    if let Ok(mut z) = q.get_mut(ev.entity) {
-        z.0 = 100;
+    if q.contains(ev.entity) {
+        commands.entity(ev.entity).insert(GlobalZIndex(100));
     }
 }
 
@@ -203,11 +210,12 @@ fn on_drag(
 
 fn on_drag_end(
     ev: On<bevy::picking::events::PointerDragEnd>,
-    mut q: Query<(&mut UiTransform, &mut GlobalZIndex), With<DragSource>>,
+    mut q: Query<&mut UiTransform, With<DragSource>>,
+    mut commands: Commands,
 ) {
-    if let Ok((mut t, mut z)) = q.get_mut(ev.entity) {
+    if let Ok(mut t) = q.get_mut(ev.entity) {
         t.translation = Val2::ZERO;
-        z.0 = 0;
+        commands.entity(ev.entity).remove::<GlobalZIndex>();
     }
 }
 

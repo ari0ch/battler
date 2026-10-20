@@ -34,6 +34,12 @@ pub fn apply_actions(
     }
     // The field picker may report the same click more than once.
     actions.dedup();
+    // A unit on the field is also a drop target for its own cell, and it is
+    // under the pointer for the whole drag (it follows it), so every drop
+    // would "land" back where it started. Ignore drops onto yourself.
+    actions.retain(|a| {
+        !matches!(a, UiAction::Drop(DragSource::Unit(Location::Board(from)), DropTarget::Cell(to)) if from == to)
+    });
     // A drop onto a unit standing on the field also lands on the field under
     // the pointer, which may be the cell behind it (sprites are taller than
     // their tile). The unit's own cell wins.

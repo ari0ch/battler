@@ -575,7 +575,6 @@ fn unit_tile(
             DragSource::Unit(loc),
             // Let drops "see through" the tile being dragged to the target below.
             Pickable { should_block_lower: false, is_hoverable: true },
-            GlobalZIndex::default(),
             Node {
                 width: px(size),
                 height: px(size),
@@ -625,7 +624,7 @@ fn standings(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
     });
     parent
         .spawn(ui::panel(Node {
-            width: px(118),
+            width: px(132),
             flex_shrink: 0.0,
             padding: UiRect::axes(px(14), px(16)),
             ..column(8.0)
@@ -733,9 +732,15 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites, in_ba
                     } else {
                         ("New".to_string(), color::INK_FAINT)
                     };
+                    // Buying this one would merge into an upgrade: ring it in gold.
+                    let ring = Outline {
+                        width: px(if merges { 3.0 } else { 0.0 }),
+                        offset: px(2),
+                        color: color::GOLD_LIGHT,
+                    };
                     offers
                         .spawn(ui::button(UiAction::Buy(i), ui::PARCHMENT, node))
-                        .insert(cards::unit_tooltip(c, None, None))
+                        .insert((cards::unit_tooltip(c, None, None), ring))
                         .with_children(|card| {
                             card.spawn((row(8.0), Pickable::IGNORE)).with_children(|r| {
                                 r.spawn((
@@ -1016,7 +1021,6 @@ fn board_unit(
         DropTarget::Cell(pos),
         // Let the pointer through to the field picker below (drops, hover).
         Pickable { should_block_lower: false, is_hoverable: true },
-        GlobalZIndex::default(),
         ZIndex(field::depth_z(feet.y)),
         field::standing(feet + Vec2::new(0.0, 8.0), size, size + 8.0),
         cards::unit_tooltip(
