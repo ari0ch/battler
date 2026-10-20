@@ -2,20 +2,19 @@
 // can show a progress bar instead of a black screen while ~8 MB downloads.
 // See https://trunkrs.dev (data-initializer on the rust link in index.html).
 //
-// `current` counts the bytes the browser has *decompressed*, but `total` is the
-// *compressed* Content-Length when the server gzips the file, so their ratio
-// overshoots. We estimate the full size from the ratio seen last time (kept in
-// localStorage; a guess on the very first visit) and never claim to be done
-// until the download really is.
+// `current` and `total` normally count the same bytes. If a server ever
+// reports a compressed Content-Length while counting decompressed bytes, the
+// ratio would overshoot; we remember the ratio seen when loading finished
+// (localStorage, a per-browser convenience) and divide by it next time.
 
 const RATIO_KEY = "battler.wasmRatio";
 
 function savedRatio() {
   try {
     const r = parseFloat(localStorage.getItem(RATIO_KEY));
-    return r > 0.5 && r < 10 ? r : 3.2;
+    return r >= 1 && r < 10 ? r : 1;
   } catch {
-    return 3.2;
+    return 1;
   }
 }
 
