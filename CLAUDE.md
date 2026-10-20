@@ -22,6 +22,12 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 - `.github/workflows/ci.yml`: fmt, clippy (`-D warnings`) and tests on every push.
 - `.github/workflows/deploy.yml`: trunk WASM build, deployed to GitHub Pages on `main`.
   The live build is at https://ari0ch.github.io/battler/
+- `.github/workflows/size.yml`: builds the web release on pushes that touch the game and
+  reports its size (raw, gzip, brotli) and the biggest crates as run annotations
+  (`tools/wasm_size.py`). Check it after adding dependencies or Bevy features; Bevy's
+  features are listed one by one in the root `Cargo.toml` to keep the download small.
+- `crates/game/index.html` + `loader.js`: the HTML loading screen and its progress bar
+  (a trunk initializer), shown while the wasm downloads.
 
 ## Sim rules (determinism)
 

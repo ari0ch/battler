@@ -1,0 +1,37 @@
+name: Wasm size
+
+# Builds the web release the same way the deploy does and reports how big it
+# is, and which crates the space goes to, as annotations on the run.
+on:
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/game/**"
+      - "tools/wasm_size.py"
+      - ".github/workflows/size.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-size
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk,twiggy
+      - run: sudo apt-get install -y --no-install-recommends brotli
+      - name: Build web release
+        working-directory: crates/game
+        run: trunk build --release --public-url /battler/
+      - name: Report
+        run: |
+          twiggy top -n 100000 --format csv target/wasm32-unknown-unknown/release/battler.wasm > twiggy.csv
+          python3 tools/wasm_size.py crates/game/dist/*_bg.wasm twiggy.csv
