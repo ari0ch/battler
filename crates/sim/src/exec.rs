@@ -12,7 +12,7 @@ use std::cmp::Reverse;
 use crate::battle::{CRIT_DAMAGE_PERCENT, StatusKind};
 use crate::program::{Requirement, WEAK_PERCENT};
 use crate::{
-    Action, Battle, CardRef, Class, Condition, Event, MAX_CARDS, Node, Passive, Pos, Target,
+    Action, Battle, CardRef, Class, Condition, Event, Item, MAX_CARDS, Node, Passive, Pos, Target,
 };
 
 /// Who an action may target.
@@ -244,8 +244,11 @@ impl Battle {
         if done && let Some(a) = ability {
             let mage_bonus = self.units[i].class == Class::Mage
                 && self.synergies[self.units[i].team.index()].full(Class::Mage);
-            let cooldown =
+            let mut cooldown =
                 if mage_bonus { a.cooldown().saturating_sub(2).max(1) } else { a.cooldown() };
+            if self.units[i].has_item(Item::Hourglass) {
+                cooldown = cooldown.saturating_sub(1).max(1);
+            }
             let unit = &mut self.units[i];
             unit.ready_at[a.index()] = self.tick + cooldown;
             unit.abilities_used += 1;
@@ -275,13 +278,27 @@ impl Battle {
         if self.dist(i, j) > self.units[i].stats.range {
             return false;
         }
-        let attack = self.units[i].stats.attack;
-        self.strike(i, j, attack, events);
+        self.basic_hit(i, j, events);
         // Frenzy: a second strike, if the target survived the first.
         if self.units[i].statuses.frenzied_until >= self.tick && self.units[j].is_alive() {
-            self.strike(i, j, attack, events);
+            self.basic_hit(i, j, events);
         }
         true
+    }
+
+    /// One basic attack: a strike at full attack, or with Twin Blades two at 60%
+    /// (the second only if the target is still standing).
+    fn basic_hit(&mut self, i: usize, j: usize, events: &mut Vec<Event>) {
+        let attack = self.units[i].stats.attack;
+        if self.units[i].has_item(Item::TwinBlades) {
+            let half = attack * 60 / 100;
+            self.strike(i, j, half, events);
+            if self.units[j].is_alive() {
+                self.strike(i, j, half, events);
+            }
+        } else {
+            self.strike(i, j, attack, events);
+        }
     }
 
     fn try_retreat(&mut self, i: usize, events: &mut Vec<Event>) -> bool {
@@ -686,6 +703,11 @@ impl Battle {
         let rolled = self.rng.chance(self.units[i].crit_chance);
         let crit = rolled || self.force_crit;
         let mut damage = if crit { base * CRIT_DAMAGE_PERCENT / 100 } else { base };
+        // Whetstone: the first hit of the battle deals double.
+        if self.units[i].has_item(Item::Whetstone) && !self.units[i].items_spent.whetstone {
+            self.units[i].items_spent.whetstone = true;
+            damage *= 2;
+        }
 
         // Attacker and target bonuses (percentages multiply).
         let pct = |d: u32, p: u32| d * p / 100;
@@ -716,29 +738,25 @@ impl Battle {
                 let allies = self.allies_of(j, false).filter(|&k| self.dist(j, k) == 1).count();
                 damage = pct(damage, 100 - 10 * allies.min(3) as u32);
             }
+            if target.has_item(Item::Aegis) {
+                damage = pct(damage, 85);
+            }
         }
 
-        let (attacker, victim) = (self.units[i].id, self.units[j].id);
-        let was_alive = self.units[j].is_alive();
-        let lethal = damage >= self.units[j].hp;
-        let undying =
-            lethal && self.units[j].has_passive(Passive::Undying) && !self.units[j].cheated_death;
-        let dealt = if undying { self.units[j].hp - 1 } else { damage.min(self.units[j].hp) };
+        let victim = self.units[j].id;
+        let melee = self.dist(i, j) <= 1;
+        let dealt = self.deal(i, j, damage, crit, events);
 
-        let t = &mut self.units[j];
-        t.hp -= dealt;
-        if damage > 0 {
-            t.statuses.damaged_on = self.tick;
-            t.statuses.hit_by = Some(attacker);
-        }
-        events.push(Event::Attacked { attacker, target: victim, damage, crit });
-
-        if undying {
-            self.units[j].cheated_death = true;
-            events.push(Event::CheatedDeath { unit: victim });
-        } else if was_alive && !self.units[j].is_alive() {
-            events.push(Event::Died { unit: victim });
-            self.try_resurrect(j, events);
+        // Item effects of the hit.
+        if dealt > 0 && self.units[i].is_alive() {
+            if self.units[i].has_item(Item::VampireFang) && dealt / 5 > 0 {
+                self.heal(i, i, dealt / 5, events);
+            }
+            // Spiked Buckler: reflected damage doesn't reflect again (it goes
+            // through `deal`, not `strike`).
+            if melee && self.units[j].has_item(Item::SpikedBuckler) && dealt / 5 > 0 {
+                self.deal(j, i, dealt / 5, false, events);
+            }
         }
 
         // After-hit effects for the attacker.
@@ -762,6 +780,69 @@ impl Battle {
                 self.heal(i, i, amount, events);
             }
         }
+    }
+
+    /// Takes `damage` off unit `j` (dealt by `i`) and handles what follows:
+    /// Undying, death and revival, and a Healing Draught. Returns the HP
+    /// actually lost.
+    fn deal(
+        &mut self,
+        i: usize,
+        j: usize,
+        damage: u32,
+        crit: bool,
+        events: &mut Vec<Event>,
+    ) -> u32 {
+        let (attacker, victim) = (self.units[i].id, self.units[j].id);
+        let was_alive = self.units[j].is_alive();
+        let lethal = damage >= self.units[j].hp;
+        let undying =
+            lethal && self.units[j].has_passive(Passive::Undying) && !self.units[j].cheated_death;
+        let dealt = if undying { self.units[j].hp - 1 } else { damage.min(self.units[j].hp) };
+
+        let t = &mut self.units[j];
+        t.hp -= dealt;
+        if damage > 0 {
+            t.statuses.damaged_on = self.tick;
+            t.statuses.hit_by = Some(attacker);
+        }
+        events.push(Event::Attacked { attacker, target: victim, damage, crit });
+
+        if undying {
+            self.units[j].cheated_death = true;
+            events.push(Event::CheatedDeath { unit: victim });
+        } else if was_alive && !self.units[j].is_alive() {
+            events.push(Event::Died { unit: victim });
+            if !self.try_phoenix(j, events) {
+                self.try_resurrect(j, events);
+            }
+        }
+
+        // Healing Draught: the first time below 40%, drink it.
+        let u = &self.units[j];
+        if u.is_alive()
+            && u.hp_percent() < 40
+            && u.has_item(Item::HealingDraught)
+            && !u.items_spent.draught
+        {
+            self.units[j].items_spent.draught = true;
+            let amount = self.units[j].stats.max_hp * 30 / 100;
+            self.heal(j, j, amount, events);
+        }
+        dealt
+    }
+
+    /// Phoenix Feather: a fallen unit carrying one revives at 40% HP, once.
+    fn try_phoenix(&mut self, j: usize, events: &mut Vec<Event>) -> bool {
+        let u = &mut self.units[j];
+        if !u.has_item(Item::PhoenixFeather) || u.items_spent.phoenix {
+            return false;
+        }
+        u.items_spent.phoenix = true;
+        u.hp = (u.stats.max_hp * 40 / 100).max(1);
+        u.statuses.frozen_turns = 0;
+        events.push(Event::Revived { unit: u.id, hp: u.hp });
+        true
     }
 
     /// Resurrection: the first of a team's units to fall comes back at 30%,

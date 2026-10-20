@@ -2,8 +2,10 @@ use std::fmt;
 
 use crate::program::ProgramError;
 use crate::synergy::Synergies;
+use crate::unit::ItemsSpent;
 use crate::{
-    Ability, CardRef, Class, Passive, Pos, Rng, Signal, Statuses, Team, Unit, UnitId, UnitSpec,
+    Ability, CardRef, Class, Item, Passive, Pos, Rng, Signal, Statuses, Team, Unit, UnitId,
+    UnitSpec,
 };
 
 /// Chance (in percent) that any single hit is a critical strike.
@@ -202,6 +204,21 @@ impl Battle {
         let boost = 100 + spec.boost_percent;
         stats.max_hp = stats.max_hp * boost / 100;
         stats.attack = stats.attack * boost / 100;
+        // Stat items.
+        let has = |item| crate::item::has(&spec.items, item);
+        let mut crit_chance = CRIT_CHANCE_PERCENT;
+        if has(Item::IronSword) {
+            stats.attack = stats.attack * 115 / 100;
+        }
+        if has(Item::LeatherJerkin) {
+            stats.max_hp = stats.max_hp * 120 / 100;
+        }
+        if has(Item::LuckyCoin) {
+            crit_chance += 10;
+        }
+        if has(Item::Spyglass) {
+            stats.range += 1;
+        }
         let id = UnitId(self.next_id);
         self.next_id += 1;
         self.units.push(Unit {
@@ -215,7 +232,9 @@ impl Battle {
             hp: stats.max_hp,
             program: spec.program,
             statuses: Statuses::default(),
-            crit_chance: CRIT_CHANCE_PERCENT,
+            crit_chance,
+            items: spec.items,
+            items_spent: ItemsSpent::default(),
             ready_at: [0; Ability::COUNT],
             abilities_used: 0,
             cheated_death: false,
@@ -267,8 +286,10 @@ impl Battle {
     }
 
     fn compute_synergies(&self, team: Team) -> Synergies {
-        Synergies::from_characters(
-            self.units.iter().filter(|u| u.team == team).filter_map(|u| u.kind.character()),
+        Synergies::from_members(
+            self.units.iter().filter(|u| u.team == team).filter_map(|u| {
+                u.kind.character().map(|c| (c, crate::item::banner_class(&u.items)))
+            }),
         )
     }
 
@@ -291,6 +312,9 @@ impl Battle {
             }
             if unit.has_passive(Passive::Vanish) {
                 unit.statuses.untargetable_until = 2;
+            }
+            if unit.has_item(Item::Aegis) {
+                unit.statuses.immune_until = 2;
             }
         }
     }
@@ -345,6 +369,26 @@ impl Battle {
             self.step();
         }
         self.outcome
+    }
+
+    /// Scout's Map: before the battle starts, each unit carrying one moves one
+    /// row towards the enemy, if that cell is free and still on its own half.
+    /// Units move in id order, so the result never depends on anything else.
+    pub fn scout_ahead(&mut self) {
+        let half = self.width / 2;
+        for i in 0..self.units.len() {
+            let u = &self.units[i];
+            if !u.has_item(Item::ScoutsMap) {
+                continue;
+            }
+            let (to, own_half) = match u.team {
+                Team::Player => (Pos::new(u.pos.x + 1, u.pos.y), u.pos.x + 1 < half),
+                Team::Enemy => (Pos::new(u.pos.x - 1, u.pos.y), u.pos.x > half),
+            };
+            if own_half && self.in_bounds(to) && !self.is_occupied(to) {
+                self.units[i].pos = to;
+            }
+        }
     }
 
     pub(crate) fn in_bounds(&self, p: Pos) -> bool {

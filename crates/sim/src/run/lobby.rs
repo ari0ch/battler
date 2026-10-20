@@ -15,7 +15,7 @@ use super::player::{Player, RoundOutcome};
 use super::pool::Pool;
 use super::{BattleSetup, Location, Opponent, OwnedId, PlayerId, RunError, RunStatus};
 use crate::monster::mirror;
-use crate::{Character, Monster, Outcome, Pos, Program, Rng, Team, UnitSpec, Wave};
+use crate::{Character, Item, Monster, Outcome, Pos, Program, Rarity, Rng, Team, UnitSpec, Wave};
 
 /// What kind of round a round number is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +58,18 @@ pub enum Command {
         to: Location,
     },
     SetProgram(Location, Program),
+    /// Equip stash item `item` on the unit at `to`, into `slot` (swapping out
+    /// what's there) or the first free slot.
+    Equip {
+        item: usize,
+        to: Location,
+        slot: Option<usize>,
+    },
+    /// Put the item in `slot` of the unit at `from` back in the stash.
+    Unequip {
+        from: Location,
+        slot: usize,
+    },
 }
 
 /// What a successful [`Command`] did.
@@ -72,6 +84,8 @@ pub enum Applied {
     BoughtXp(Vec<u32>),
     Moved,
     ProgramSet,
+    Equipped,
+    Unequipped,
 }
 
 /// One battle of the round. `home` fights on the left.
@@ -214,6 +228,14 @@ impl Lobby {
                 player.set_program(loc, program)?;
                 Applied::ProgramSet
             }
+            Command::Equip { item, to, slot } => {
+                player.equip(item, to, slot)?;
+                Applied::Equipped
+            }
+            Command::Unequip { from, slot } => {
+                player.unequip(from, slot)?;
+                Applied::Unequipped
+            }
         })
     }
 
@@ -309,6 +331,10 @@ impl Lobby {
                         if won { WIN_BONUS } else { 0 },
                     ),
                 };
+                let loot = match opponent {
+                    Opponent::Monsters(wave) => loot(wave, result, &mut self.rng),
+                    _ => Vec::new(),
+                };
                 let player = &mut self.players[id.0];
                 finishing.push((id, i64::from(player.hp()) - i64::from(damage)));
                 let survivors = alive_on(side).count();
@@ -322,6 +348,7 @@ impl Lobby {
                     survivors,
                     damage,
                     reward,
+                    loot,
                 };
                 player.settle(outcome, m.setup.clone());
             }
@@ -398,6 +425,19 @@ impl Lobby {
     pub(super) fn player_mut(&mut self, id: PlayerId) -> &mut Player {
         &mut self.players[id.0]
     }
+}
+
+/// What a PvE round drops for one player (see the Items section of the design
+/// notes): the opening monster waves always drop two commons; a boss drops a
+/// rare on a win (plus an epic from its second cycle on), or a common on a loss.
+pub(super) fn loot(wave: Wave, result: Option<bool>, rng: &mut Rng) -> Vec<Item> {
+    let rarities: &[Rarity] = match (wave, result) {
+        (Wave::Boss { tier, .. }, Some(true)) if tier >= 1 => &[Rarity::Rare, Rarity::Epic],
+        (Wave::Boss { .. }, Some(true)) => &[Rarity::Rare],
+        (Wave::Boss { .. }, _) => &[Rarity::Common],
+        _ => &[Rarity::Common, Rarity::Common],
+    };
+    rarities.iter().map(|&r| Item::roll(r, rng)).collect()
 }
 
 /// Moves a board from a player's half onto the right half of the battlefield.

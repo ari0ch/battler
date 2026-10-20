@@ -24,11 +24,20 @@ pub struct Synergies {
 impl Synergies {
     /// Counts distinct characters (a character appearing twice counts once).
     pub fn from_characters(characters: impl IntoIterator<Item = Character>) -> Self {
-        let mut seen = [false; Character::COUNT];
+        Self::from_members(characters.into_iter().map(|c| (c, None)))
+    }
+
+    /// Counts distinct characters per class, where a character may also count
+    /// for an extra class (a Banner item). Each character counts at most once
+    /// per class, however many copies or Banners there are.
+    pub fn from_members(members: impl IntoIterator<Item = (Character, Option<Class>)>) -> Self {
+        let mut seen = [[false; 6]; Character::COUNT];
         let mut counts = [0u8; 6];
-        for c in characters {
-            if !std::mem::replace(&mut seen[c.index()], true) {
-                counts[c.class().index()] += 1;
+        for (c, extra) in members {
+            for class in [Some(c.class()), extra].into_iter().flatten() {
+                if !std::mem::replace(&mut seen[c.index()][class.index()], true) {
+                    counts[class.index()] += 1;
+                }
             }
         }
         Self { counts }

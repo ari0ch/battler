@@ -430,3 +430,108 @@ fn a_bot_lobby_ends_with_one_winner_and_every_placement() {
     assert_eq!(winners[0].placement(), Some(1));
     assert_eq!(lobby.start_round(), Err(RunError::RunOver));
 }
+
+// ----- Items -------------------------------------------------------------------
+
+#[test]
+fn opening_waves_always_drop_two_commons() {
+    let mut lobby = Lobby::new(5, 1);
+    let report = play_round(&mut lobby);
+    assert_eq!(report.loot.len(), 2);
+    assert!(report.loot.iter().all(|i| i.rarity() == Rarity::Common));
+    for p in lobby.players() {
+        // Bots may have equipped theirs; either way each player got two.
+        let equipped: usize = p.all_units().map(|u| u.items.iter().flatten().count()).sum();
+        assert_eq!(p.stash().len() + equipped, 2, "{}", p.name());
+    }
+}
+
+#[test]
+fn bosses_drop_by_tier_and_result() {
+    use crate::{Monster, Wave};
+    let mut rng = crate::Rng::new(1);
+    let boss = |tier| Wave::Boss { boss: Monster::Lich, tier };
+    let rarities = |items: Vec<Item>| items.iter().map(|i| i.rarity()).collect::<Vec<_>>();
+    assert_eq!(rarities(super::lobby::loot(boss(0), Some(true), &mut rng)), vec![Rarity::Rare]);
+    assert_eq!(
+        rarities(super::lobby::loot(boss(1), Some(true), &mut rng)),
+        vec![Rarity::Rare, Rarity::Epic]
+    );
+    assert_eq!(rarities(super::lobby::loot(boss(2), Some(false), &mut rng)), vec![Rarity::Common]);
+    assert_eq!(rarities(super::lobby::loot(boss(0), None, &mut rng)), vec![Rarity::Common]);
+}
+
+/// A player owning one Bram and these stashed items.
+fn armed(items: &[Item]) -> Player {
+    let mut p = with_shop(BramGatewarden, 10);
+    p.buy(0).unwrap();
+    p.add_to_stash(items);
+    p
+}
+
+#[test]
+fn equip_unequip_and_swap() {
+    let mut p = armed(&[Item::IronSword, Item::Aegis, Item::Spyglass]);
+    let bram = find(&p, BramGatewarden);
+    p.equip(0, bram, None).unwrap();
+    p.equip(0, bram, None).unwrap();
+    assert_eq!(p.unit_at(bram).unwrap().items, [Some(Item::IronSword), Some(Item::Aegis)]);
+    assert_eq!(p.equip(0, bram, None), Err(RunError::ItemSlotsFull));
+    // Dropping onto a slot swaps the old item back into the stash.
+    p.equip(0, bram, Some(1)).unwrap();
+    assert_eq!(p.unit_at(bram).unwrap().items[1], Some(Item::Spyglass));
+    assert_eq!(p.stash(), &[Item::Aegis]);
+    p.unequip(bram, 0).unwrap();
+    assert_eq!(p.stash(), &[Item::Aegis, Item::IronSword]);
+    assert_eq!(p.unequip(bram, 0), Err(RunError::EmptyItemSlot));
+    assert_eq!(p.equip(9, bram, None), Err(RunError::NoItem(9)));
+}
+
+#[test]
+fn selling_returns_items_to_the_stash() {
+    let mut pool = Pool::new();
+    let mut p = armed(&[Item::Whetstone]);
+    let bram = find(&p, BramGatewarden);
+    p.equip(0, bram, None).unwrap();
+    p.sell(bram, &mut pool).unwrap();
+    assert_eq!(p.stash(), &[Item::Whetstone]);
+}
+
+#[test]
+fn merging_keeps_items_and_stashes_the_overflow() {
+    let mut p = with_shop(BramGatewarden, 10);
+    p.add_to_stash(&[Item::IronSword, Item::Aegis, Item::Spyglass]);
+    p.buy(0).unwrap();
+    p.buy(1).unwrap();
+    // Two copies, one item each, plus one more on the first.
+    let units: Vec<Location> = p
+        .all_units()
+        .map(|u| u.id)
+        .collect::<Vec<_>>()
+        .iter()
+        .map(|&id| p.locate(id).unwrap())
+        .collect();
+    p.equip(0, units[0], None).unwrap();
+    p.equip(0, units[0], None).unwrap();
+    p.equip(0, units[1], None).unwrap();
+    p.buy(2).unwrap();
+    let merged: Vec<&OwnedUnit> = p.all_units().collect();
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].level, crate::Level::Two);
+    assert_eq!(merged[0].items.iter().flatten().count(), 2);
+    assert_eq!(p.stash().len(), 1, "the third item didn't fit");
+}
+
+#[test]
+fn equip_goes_through_the_lobby() {
+    let mut lobby = Lobby::new(5, 1);
+    play_round(&mut lobby);
+    let me = lobby.player(ME);
+    let Some(unit) = me.all_units().next().map(|u| u.id) else { return };
+    let loc = me.locate(unit).unwrap();
+    let before = me.stash().len();
+    lobby.apply(ME, Command::Equip { item: 0, to: loc, slot: None }).unwrap();
+    assert_eq!(lobby.player(ME).stash().len(), before - 1);
+    lobby.apply(ME, Command::Unequip { from: loc, slot: 0 }).unwrap();
+    assert_eq!(lobby.player(ME).stash().len(), before);
+}

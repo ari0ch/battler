@@ -959,3 +959,215 @@ fn it_needs_a_condition_that_spots_the_right_side() {
     ]);
     assert_eq!(fine.validate_basic(SisterAgnes), Ok(()));
 }
+
+// ----- Items ----------------------------------------------------------------
+
+fn add_with(
+    b: &mut Battle,
+    team: Team,
+    x: i32,
+    y: i32,
+    who: Character,
+    nodes: &[Node],
+    items: &[Item],
+) -> UnitId {
+    let mut slots = [None; ITEM_SLOTS];
+    for (slot, item) in slots.iter_mut().zip(items) {
+        *slot = Some(*item);
+    }
+    let spec = UnitSpec::new(who, Level::Three, Program::new(nodes.to_vec())).with_items(slots);
+    b.spawn(team, Pos::new(x, y), spec).expect("valid test unit")
+}
+
+fn unit_of(b: &Battle, id: UnitId) -> &Unit {
+    b.units().iter().find(|u| u.id == id).unwrap()
+}
+
+/// A tough dummy that soaks hits without dying.
+fn soak(b: &mut Battle, team: Team, x: i32, y: i32) -> UnitId {
+    let id = dummy(b, team, x, y, BramGatewarden);
+    unit_mut(b, id).stats.max_hp = 100_000;
+    unit_mut(b, id).hp = 100_000;
+    id
+}
+
+#[test]
+fn stat_items_change_stats_at_spawn() {
+    let mut b = Battle::new(4, 2, 50, 0);
+    let plain = add(&mut b, Team::Player, 0, 0, Grub, &[]);
+    let geared =
+        add_with(&mut b, Team::Player, 0, 1, Grub, &[], &[Item::IronSword, Item::LeatherJerkin]);
+    let ranged =
+        add_with(&mut b, Team::Player, 1, 0, Kestrel, &[], &[Item::Spyglass, Item::LuckyCoin]);
+    let (p, g) = (unit_of(&b, plain).stats, unit_of(&b, geared).stats);
+    assert_eq!(g.attack, p.attack * 115 / 100);
+    assert_eq!(g.max_hp, p.max_hp * 120 / 100);
+    assert_eq!(unit_of(&b, geared).hp, g.max_hp);
+    let k = unit_of(&b, ranged);
+    assert_eq!(k.stats.range, Level::Three.scale(Kestrel.base_stats()).range + 1);
+    assert_eq!(k.crit_chance, CRIT_CHANCE_PERCENT + 10);
+}
+
+#[test]
+fn twin_blades_hit_twice_at_sixty_percent() {
+    let mut b = battle(2, 1);
+    add_with(
+        &mut b,
+        Team::Player,
+        0,
+        0,
+        Grub,
+        &[card(Always, Attack(Target::Nearest))],
+        &[Item::TwinBlades],
+    );
+    let target = soak(&mut b, Team::Enemy, 1, 0);
+    let hit = attack_of(Grub) * 60 / 100;
+    assert_eq!(damage_to(&b.step(), target), vec![hit, hit]);
+}
+
+#[test]
+fn whetstone_doubles_only_the_first_hit() {
+    let mut b = battle(2, 1);
+    add_with(
+        &mut b,
+        Team::Player,
+        0,
+        0,
+        Grub,
+        &[card(Always, Attack(Target::Nearest))],
+        &[Item::Whetstone],
+    );
+    let target = soak(&mut b, Team::Enemy, 1, 0);
+    assert_eq!(damage_to(&b.step(), target), vec![attack_of(Grub) * 2]);
+    assert_eq!(damage_to(&b.step(), target), vec![attack_of(Grub)]);
+}
+
+#[test]
+fn vampire_fang_heals_a_fifth_of_damage_dealt() {
+    let mut b = battle(2, 1);
+    let grub = add_with(
+        &mut b,
+        Team::Player,
+        0,
+        0,
+        Grub,
+        &[card(Always, Attack(Target::Nearest))],
+        &[Item::VampireFang],
+    );
+    unit_mut(&mut b, grub).hp = 10;
+    soak(&mut b, Team::Enemy, 1, 0);
+    assert_eq!(healed(&b.step(), grub), attack_of(Grub) / 5);
+}
+
+#[test]
+fn spiked_buckler_reflects_melee_damage_only() {
+    let mut b = battle(3, 2);
+    let grub = add(&mut b, Team::Player, 0, 0, Grub, &[card(Always, Attack(Target::Nearest))]);
+    let wall = add_with(&mut b, Team::Enemy, 1, 0, BramGatewarden, &[], &[Item::SpikedBuckler]);
+    unit_mut(&mut b, wall).inert = true;
+    unit_mut(&mut b, wall).hp = 100_000;
+    let events = b.step();
+    let dealt = damage_to(&events, wall)[0];
+    assert_eq!(damage_to(&events, grub), vec![dealt / 5]);
+
+    // A ranged attacker two cells away takes nothing back.
+    let mut b = battle(3, 1);
+    let archer = add(&mut b, Team::Player, 0, 0, Kestrel, &[card(Always, Attack(Target::Nearest))]);
+    let wall = add_with(&mut b, Team::Enemy, 2, 0, BramGatewarden, &[], &[Item::SpikedBuckler]);
+    unit_mut(&mut b, wall).inert = true;
+    assert!(damage_to(&b.step(), archer).is_empty());
+}
+
+#[test]
+fn phoenix_feather_revives_once_at_forty_percent() {
+    let mut b = battle(2, 1);
+    add(&mut b, Team::Player, 0, 0, Grub, &[card(Always, Attack(Target::Nearest))]);
+    let bird = add_with(&mut b, Team::Enemy, 1, 0, BramGatewarden, &[], &[Item::PhoenixFeather]);
+    unit_mut(&mut b, bird).inert = true;
+    unit_mut(&mut b, bird).hp = 1;
+    let events = b.step();
+    let max = unit_of(&b, bird).stats.max_hp;
+    assert!(events.contains(&Event::Died { unit: bird }));
+    assert!(events.contains(&Event::Revived { unit: bird, hp: max * 40 / 100 }));
+    // The second death is final.
+    unit_mut(&mut b, bird).hp = 1;
+    let events = b.step();
+    assert!(events.contains(&Event::Died { unit: bird }));
+    assert!(!events.iter().any(|e| matches!(e, Event::Revived { .. })));
+}
+
+#[test]
+fn healing_draught_heals_once_below_forty_percent() {
+    let mut b = battle(2, 1);
+    add(&mut b, Team::Player, 0, 0, Grub, &[card(Always, Attack(Target::Nearest))]);
+    let drinker = add_with(&mut b, Team::Enemy, 1, 0, BramGatewarden, &[], &[Item::HealingDraught]);
+    unit_mut(&mut b, drinker).inert = true;
+    let max = unit_of(&b, drinker).stats.max_hp;
+    // Just above 40%: one hit takes it below.
+    unit_mut(&mut b, drinker).hp = max * 40 / 100 + 1;
+    let events = b.step();
+    assert_eq!(healed(&events, drinker), max * 30 / 100);
+    // Already drunk.
+    unit_mut(&mut b, drinker).hp = max * 40 / 100 + 1;
+    assert_eq!(healed(&b.step(), drinker), 0);
+}
+
+#[test]
+fn aegis_blocks_the_first_two_ticks_then_softens_hits() {
+    let mut b = battle(2, 1);
+    add(&mut b, Team::Player, 0, 0, Grub, &[card(Always, Attack(Target::Nearest))]);
+    let guard = add_with(&mut b, Team::Enemy, 1, 0, BramGatewarden, &[], &[Item::Aegis]);
+    unit_mut(&mut b, guard).inert = true;
+    unit_mut(&mut b, guard).hp = 100_000;
+    assert_eq!(damage_to(&b.step(), guard), vec![0]);
+    assert_eq!(damage_to(&b.step(), guard), vec![0]);
+    assert_eq!(damage_to(&b.step(), guard), vec![attack_of(Grub) * 85 / 100]);
+}
+
+#[test]
+fn hourglass_shortens_signature_cooldowns() {
+    let mut b = battle(4, 1);
+    let pip = add_with(
+        &mut b,
+        Team::Player,
+        0,
+        0,
+        PipQuickfeather,
+        &[card(Always, AimedShot(Target::Nearest)), card(Always, Guard)],
+        &[Item::Hourglass],
+    );
+    soak(&mut b, Team::Enemy, 3, 0);
+    let cooldown = Ability::AimedShot.cooldown() as usize - 1;
+    let cards: Vec<_> = (0..=cooldown).map(|_| first_fired(&b.step(), pip).unwrap()).collect();
+    assert_eq!(cards[0], CardRef::Node(0));
+    assert_eq!(cards[cooldown], CardRef::Node(0), "ready a tick sooner");
+}
+
+#[test]
+fn banners_count_their_class_for_synergies() {
+    let mut b = Battle::new(4, 3, 50, 0);
+    add(&mut b, Team::Player, 0, 0, BramGatewarden, &[]);
+    assert!(!b.synergies(Team::Player).active(Class::Knight));
+    add_with(&mut b, Team::Player, 0, 1, Grub, &[], &[Item::Banner(Class::Knight)]);
+    let syn = b.synergies(Team::Player);
+    assert_eq!(syn.count(Class::Knight), 2);
+    assert_eq!(syn.count(Class::Berserker), 1, "still counts as its own class");
+}
+
+#[test]
+fn scouts_map_moves_forward_on_its_own_half_only() {
+    let setup = |x: i32| {
+        let mut b = Battle::new(8, 1, 50, 0);
+        let id = add_with(&mut b, Team::Player, x, 0, Grub, &[], &[Item::ScoutsMap]);
+        b.scout_ahead();
+        unit_of(&b, id).pos.x
+    };
+    assert_eq!(setup(1), 2);
+    assert_eq!(setup(3), 3, "the midline stops it");
+    // Blocked by an ally in front.
+    let mut b = Battle::new(8, 1, 50, 0);
+    let scout = add_with(&mut b, Team::Player, 1, 0, Grub, &[], &[Item::ScoutsMap]);
+    add(&mut b, Team::Player, 2, 0, BramGatewarden, &[]);
+    b.scout_ahead();
+    assert_eq!(unit_of(&b, scout).pos.x, 1);
+}
