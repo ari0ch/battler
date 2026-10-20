@@ -25,6 +25,10 @@ jobs:
           [workspace.package]
           version = "0.1.0"
           edition = "2024"
+          license = "MIT OR Apache-2.0"
+          repository = "https://github.com/ari0ch/battler"
+          [workspace.lints.rust]
+          unsafe_code = "forbid"
           [workspace.dependencies]
           battler-sim = { path = "crates/sim" }
           T
@@ -50,7 +54,8 @@ jobs:
           T
           touch /tmp/ws/crates/proto/src/lib.rs
           echo 'fn main() {}' > /tmp/ws/crates/server/src/main.rs
-          cd /tmp/ws && cargo generate-lockfile && cargo vendor --versioned-dirs vendor > /dev/null
+          cd /tmp/ws && (cargo generate-lockfile 2>&1 | tee err.txt) && test ${PIPESTATUS[0]} -eq 0 || { echo "::error title=vendor::$(tr '\n' ' ' < err.txt)"; exit 1; }
+          cargo generate-lockfile && cargo vendor --versioned-dirs vendor > /dev/null
           du -sh vendor
       - name: Push
         run: |
