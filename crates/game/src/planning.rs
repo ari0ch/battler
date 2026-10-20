@@ -374,7 +374,7 @@ fn rebuild(
         shop(stage, run, &sprites, battle.is_some());
         notice(stage, &planning);
         if let (None, Some((report, _))) = (battle, &planning.result) {
-            spawn_result_popup(stage, lobby, report);
+            spawn_result_popup(stage, lobby, report, &sprites);
         }
     });
 }

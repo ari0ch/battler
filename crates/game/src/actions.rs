@@ -198,15 +198,100 @@ fn planning_action(
             (DragSource::Placed(from, slot), DropTarget::Card(to)) => {
                 editor::move_block(lobby, planning, from, slot, to)
             }
-            (DragSource::Block(_) | DragSource::Placed(..), _)
-            | (DragSource::Unit(_), DropTarget::Card(_)) => {}
+            (DragSource::Stash(item), target) => {
+                if let Some((to, slot)) = item_target(lobby.me(), planning, target) {
+                    report(planning, lobby.act(Command::Equip { item, to, slot }));
+                }
+            }
+            (DragSource::Equipped(from, slot), target) => {
+                match item_target(lobby.me(), planning, target) {
+                    Some((to, to_slot)) => move_item(lobby, planning, from, slot, to, to_slot),
+                    // Dropped on empty ground: the drag counted it as landing on
+                    // the board, so put it back in the stash here.
+                    None if matches!(
+                        target,
+                        DropTarget::Cell(_) | DropTarget::Field(_) | DropTarget::Bench(_)
+                    ) =>
+                    {
+                        report(planning, lobby.act(Command::Unequip { from, slot }));
+                    }
+                    // Anywhere else, the end of the drag puts it back.
+                    None => {}
+                }
+            }
+            // Units dropped on program cards or item spots, blocks dropped on
+            // anything but a card: nothing to do.
+            _ => {}
         },
+        UiAction::EquipStash(item) => {
+            if let Some(to) = selected_loc(lobby.me(), planning) {
+                report(planning, lobby.act(Command::Equip { item, to, slot: None }));
+            }
+        }
+        UiAction::Unequip(from, slot) => {
+            report(planning, lobby.act(Command::Unequip { from, slot }));
+        }
         _ => {}
     }
     // Keep the selection pointed at a unit that still exists (merges remove copies).
     if planning.selected.is_some() && selected_loc(lobby.me(), planning).is_none() {
         planning.selected = None;
         planning.draft.clear();
+    }
+}
+
+/// The unit (and slot, for the program pane's slots) an item dropped on
+/// `target` would go to, if there is a unit there.
+fn item_target(
+    me: &Player,
+    planning: &Planning,
+    target: DropTarget,
+) -> Option<(Location, Option<usize>)> {
+    let (loc, slot) = match target {
+        DropTarget::ItemSlot(s) => (selected_loc(me, planning)?, Some(s)),
+        DropTarget::Cell(p) | DropTarget::Field(p) => (Location::Board(p), None),
+        DropTarget::Bench(b) => (Location::Bench(b), None),
+        _ => return None,
+    };
+    me.unit_at(loc).map(|_| (loc, slot))
+}
+
+/// Moves an equipped item to another unit (or slot), as unequip-then-equip
+/// commands. Between two slots of the same unit the items swap; if the other
+/// unit has no room, the item goes back where it was.
+fn move_item(
+    lobby: &mut Lobby,
+    planning: &mut Planning,
+    from: Location,
+    slot: usize,
+    to: Location,
+    to_slot: Option<usize>,
+) {
+    let last = |lobby: &Lobby| lobby.me().stash().len().saturating_sub(1);
+    if from == to {
+        let Some(t) = to_slot.filter(|&t| t != slot) else { return };
+        let other = lobby.me().unit_at(from).and_then(|u| u.items[t]);
+        // Both go to the end of the stash (this one, then the other), then
+        // come back in swapped slots.
+        if report(planning, lobby.act(Command::Unequip { from, slot })).is_none() {
+            return;
+        }
+        if other.is_some() {
+            let _ = lobby.act(Command::Unequip { from, slot: t });
+        }
+        let first = last(lobby) - usize::from(other.is_some());
+        let _ = lobby.act(Command::Equip { item: first, to: from, slot: Some(t) });
+        if other.is_some() {
+            let _ = lobby.act(Command::Equip { item: last(lobby), to: from, slot: Some(slot) });
+        }
+        return;
+    }
+    if report(planning, lobby.act(Command::Unequip { from, slot })).is_none() {
+        return;
+    }
+    let item = last(lobby);
+    if report(planning, lobby.act(Command::Equip { item, to, slot: to_slot })).is_none() {
+        let _ = lobby.act(Command::Equip { item, to: from, slot: Some(slot) });
     }
 }
 
