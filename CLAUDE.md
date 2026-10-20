@@ -63,7 +63,7 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   palette) and editing logic. `cards.rs`: all block/character/synergy wording and tooltips.
 - Tooltips: add `Hovered::default()` plus a `ui::Tooltip` to any entity; one shared
   floating panel shows it.
-- `sprites.rs`: the 18 character and 8 monster sprites (32x32 PNGs in
+- `sprites.rs`: the 18 character (front and back) and 8 monster sprites (32x32 PNGs in
   `crates/game/assets/sprites`), embedded with `include_bytes!` and decoded once into
   the `Sprites` resource. Draw them with `sprite_node` at whole-number scales (2x on the
   board, `battle_scale` for bosses) so pixels stay crisp.
@@ -73,8 +73,16 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   corners at 2x), `tiled`, `icon`, `spawn_bar`, `wood_panel` (light text),
   `parchment_panel` (use `color::INK*` text on it). Buttons take a `ui::Skin` (wood, gold,
   pressed, parchment, flat). Regenerate art with `tools/art/`.
-- Boards are drawn rotated from sim coordinates: lanes (`y`) across the screen, depth
-  (`x`) up the screen with the enemy half above. Planning shows only the player's half.
+- The battlefield is **isometric** (`field.rs`): the sim grid as a diamond of 96x48 tiles,
+  your half bottom-left, the enemy top-right. `field::cell_centre`, `ground_to_screen`
+  and `cell_at` convert between cells, the ground plane `motion.rs` moves bodies on, and
+  screen pixels. Clicks and drops on the board go through one `FieldPicker` node that
+  turns the pointer into a cell (`DropTarget::Field`); units dropped straight onto win.
+  Draw order on the field is `field::depth_z(screen_y)`.
+- Units face one of four diagonals (`field::Facing`): `Sprites::facing` picks the front
+  (south) or back (north, `assets/sprites/back`) art and mirrors for west. Planning shows
+  units facing the camera. Board images (`board_battle.png`, `board_planning.png`) and
+  tile overlays come from `tools/art/iso_scenes.py`.
 - Screens rebuild from state whenever the `Rev` resource is bumped (every applied
   action, every state entry). Fast-changing bits (timer, toasts, battle animation)
   update in place via marker components, so a rebuild never interrupts a drag.
