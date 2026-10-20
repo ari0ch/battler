@@ -41,7 +41,7 @@ impl Plugin for PlanningPlugin {
             .add_systems(Update, rebuild.run_if(in_state(AppState::InRun)))
             .add_systems(
                 Update,
-                (hotkeys, tick_timers, update_cells)
+                (hotkeys, tick_timers, update_cells, pulse_rings)
                     .chain()
                     .after(rebuild)
                     .run_if(in_state(RunPhase::Planning)),
@@ -86,6 +86,20 @@ struct TimerBar;
 struct ToastText;
 #[derive(Component)]
 struct NoticeBox;
+
+/// A shop offer that would merge into an upgrade; its gold ring pulses.
+#[derive(Component)]
+struct UpgradeRing;
+
+const UPGRADE_GOLD: Color = Color::srgb(1.0, 0.86, 0.30);
+
+/// Pulses the upgrade rings in the shop.
+fn pulse_rings(time: Res<Time<Real>>, mut rings: Query<&mut Outline, With<UpgradeRing>>) {
+    let glow = 0.6 + 0.4 * (time.elapsed_secs() * 5.0).sin();
+    for mut ring in &mut rings {
+        ring.color = UPGRADE_GOLD.with_alpha(glow);
+    }
+}
 
 /// A highlight over one cell of your half: shown on hover, or in blue for
 /// the reach of a hovered ability. Updated each frame.
@@ -732,38 +746,35 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites, in_ba
                     } else {
                         ("New".to_string(), color::INK_FAINT)
                     };
-                    // Buying this one would merge into an upgrade: ring it in gold.
-                    let ring = Outline {
-                        width: px(if merges { 3.0 } else { 0.0 }),
-                        offset: px(2),
-                        color: color::GOLD_LIGHT,
-                    };
-                    offers
-                        .spawn(ui::button(UiAction::Buy(i), ui::PARCHMENT, node))
-                        .insert((cards::unit_tooltip(c, None, None), ring))
-                        .with_children(|card| {
-                            card.spawn((row(8.0), Pickable::IGNORE)).with_children(|r| {
-                                r.spawn((
-                                    Node {
-                                        width: px(44),
-                                        height: px(44),
-                                        flex_shrink: 0.0,
-                                        align_items: AlignItems::Center,
-                                        justify_content: JustifyContent::Center,
-                                        ..default()
-                                    },
-                                    kit::sliced(kit::rarity_frame(c.rarity()), 6.0),
-                                    Pickable::IGNORE,
-                                ))
-                                .with_child(sprite_node(
-                                    sprites.character(c),
-                                    1.0,
-                                    false,
-                                ));
-                                r.spawn((
-                                    Node { min_width: px(0), ..column(1.0) },
-                                    Pickable::IGNORE,
-                                ))
+                    let mut card = offers.spawn(ui::button(UiAction::Buy(i), ui::PARCHMENT, node));
+                    card.insert(cards::unit_tooltip(c, None, None));
+                    // Buying this one would merge into an upgrade: a pulsing gold ring.
+                    if merges {
+                        card.insert((
+                            Outline { width: px(4), offset: px(1), color: UPGRADE_GOLD },
+                            UpgradeRing,
+                        ));
+                    }
+                    card.with_children(|card| {
+                        card.spawn((row(8.0), Pickable::IGNORE)).with_children(|r| {
+                            r.spawn((
+                                Node {
+                                    width: px(44),
+                                    height: px(44),
+                                    flex_shrink: 0.0,
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    ..default()
+                                },
+                                kit::sliced(kit::rarity_frame(c.rarity()), 6.0),
+                                Pickable::IGNORE,
+                            ))
+                            .with_child(sprite_node(
+                                sprites.character(c),
+                                1.0,
+                                false,
+                            ));
+                            r.spawn((Node { min_width: px(0), ..column(1.0) }, Pickable::IGNORE))
                                 .with_children(|col| {
                                     col.spawn(heading(c.short_name(), 15.0, color::INK));
                                     col.spawn(row(4.0)).with_children(|line| {
@@ -775,27 +786,27 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites, in_ba
                                         ));
                                     });
                                 });
-                            });
-                            card.spawn((
-                                Node {
-                                    width: percent(100),
-                                    justify_content: JustifyContent::SpaceBetween,
-                                    ..row(0.0)
-                                },
-                                Pickable::IGNORE,
-                            ))
-                            .with_children(|r| {
-                                r.spawn(heading(note, 12.0, note_ink));
-                                r.spawn(row(3.0)).with_children(|price| {
-                                    price.spawn(kit::icon(kit::img::ICON_COIN, 18.0));
-                                    price.spawn(heading(
-                                        c.rarity().cost().to_string(),
-                                        15.0,
-                                        color::INK,
-                                    ));
-                                });
+                        });
+                        card.spawn((
+                            Node {
+                                width: percent(100),
+                                justify_content: JustifyContent::SpaceBetween,
+                                ..row(0.0)
+                            },
+                            Pickable::IGNORE,
+                        ))
+                        .with_children(|r| {
+                            r.spawn(heading(note, 12.0, note_ink));
+                            r.spawn(row(3.0)).with_children(|price| {
+                                price.spawn(kit::icon(kit::img::ICON_COIN, 18.0));
+                                price.spawn(heading(
+                                    c.rarity().cost().to_string(),
+                                    15.0,
+                                    color::INK,
+                                ));
                             });
                         });
+                    });
                 }
             });
             footer.spawn(Node { width: px(150), ..column(6.0) }).with_children(|col| {
