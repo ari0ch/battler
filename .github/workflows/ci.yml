@@ -49,3 +49,26 @@ jobs:
             echo "::error title=tests::${msgs}"
             exit 1
           fi
+
+  server:
+    name: Server (clippy, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: |
+          if ! cargo clippy -p battler-server --all-targets --color never --message-format=short -- -D warnings 2> clippy.txt; then
+            cat clippy.txt
+            msgs=$(grep -E '^[^ ]+:[0-9]+:[0-9]+: ' clippy.txt | head -200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=clippy::${msgs}"
+            exit 1
+          fi
+      - run: cargo build -p battler-server
+      # The workspace can't always resolve new dependencies where it's edited, so
+      # CI publishes the lockfile it resolved; commit it when it changes.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cargo.lock
+          path: Cargo.lock

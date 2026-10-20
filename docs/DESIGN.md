@@ -381,6 +381,24 @@ whose digits stay distinct (2 vs 8, percentages on cards, gold), at 1.2x the ask
   15**, so level 8 and Epic-heavy shops are rarely seen; the XP curve may need to speed
   up to match.
 
+### Multiplayer (in design, Oct 2026)
+
+- **Hosting (decided):** a dedicated Rust server, `crates/server`, on Render's free plan.
+  Considered: peer-to-peer WebRTC with one player's browser as host (still needs
+  signalling and TURN servers; the host's hidden tab stalls Bevy's frame loop unless the
+  host logic runs in a Web Worker; the game ends if the host leaves) and Cloudflare
+  Durable Objects. Fly.io and Koyeb no longer have free plans. The server is a plain
+  binary in a Dockerfile, so it can move host easily.
+- **Proposed model:** the server holds the authoritative `Lobby`, puts every command in
+  one order and broadcasts the ordered log; every client applies the same log to its own
+  copy (the sim is deterministic) and plays its battle locally from the `BattleSetup`.
+  State hashes after each round catch desyncs; rejoining replays the seed plus log.
+- **Free-plan quirks:** the service sleeps after 15 idle minutes (WebSocket messages count
+  as activity) and takes about a minute to wake, so the web build will ping `/health` on
+  page load. Render may restart free services, which ends rooms in progress.
+- **Still to decide:** disconnect policy, trust (every client sees all state), round
+  pacing, an optional `serde` feature on the sim, first-version scope (room codes only).
+
 ## Open questions
 
 1. **More randomness?** Crits are implemented (see below). Dodges or damage ranges could

@@ -1,0 +1,15 @@
+[package]
+name = "battler-server"
+description = "Battler's multiplayer server: hosts rooms and runs the authoritative lobby"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+battler-sim.workspace = true
+# The web framework: routing plus WebSocket upgrades.
+axum = { version = "0.8", features = ["ws"] }
+# The async runtime axum runs on.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }

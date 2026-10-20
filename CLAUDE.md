@@ -19,7 +19,14 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   bots alike; bots never get a shortcut. Monsters for PvE rounds live in `monster.rs`.
   Tuning numbers live in `run/economy.rs`; class/character stats in `class.rs`; synergy
   rules in `synergy.rs`; monster and boss stats in `monster.rs`.
-- `.github/workflows/ci.yml`: fmt, clippy (`-D warnings`) and tests on every push.
+- `crates/server`: `battler-server`, the multiplayer server (axum + tokio, WebSocket at
+  `/ws`, `/health` for Render's checks and wake-ups). It reuses the sim so rules are never
+  written twice. Deployed to Render's free plan from `render.yaml` (Docker,
+  `crates/server/Dockerfile`, Frankfurt) when server or sim files change on `main` and CI
+  passes. Free services sleep after 15 idle minutes and take about a minute to wake.
+- `.github/workflows/ci.yml`: fmt, clippy (`-D warnings`) and tests on every push. The
+  server job uploads the `Cargo.lock` it resolved, for when new dependencies can't be
+  resolved locally.
 - `.github/workflows/deploy.yml`: trunk WASM build, deployed to GitHub Pages on `main`.
   The live build is at https://ari0ch.github.io/battler/
 - `.github/workflows/size.yml`: builds the web release on pushes that touch the game and

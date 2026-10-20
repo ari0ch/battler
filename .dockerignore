@@ -1,0 +1,8 @@
+# Keep the Docker build context small: the server needs the workspace manifests
+# and the sim and server sources, not the game's art or build output.
+target
+.git
+crates/game/assets
+crates/game/dist
+tools
+docs
