@@ -1,0 +1,61 @@
+# Temporary: vendors the server/proto dependency sources into the vendor-out
+# branch so they can be compiled where crates.io is unreachable.
+name: Vendor
+on:
+  push:
+    branches: [vendor-req]
+permissions:
+  contents: write
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup show
+      - name: Vendor
+        run: |
+          set -e
+          mkdir -p /tmp/ws/crates/proto/src /tmp/ws/crates/server/src
+          cp -r crates/sim /tmp/ws/crates/sim
+          cp rust-toolchain.toml /tmp/ws/
+          cat > /tmp/ws/Cargo.toml <<'T'
+          [workspace]
+          resolver = "3"
+          members = ["crates/sim", "crates/proto", "crates/server"]
+          [workspace.package]
+          version = "0.1.0"
+          edition = "2024"
+          [workspace.dependencies]
+          battler-sim = { path = "crates/sim" }
+          T
+          cat > /tmp/ws/crates/proto/Cargo.toml <<'T'
+          [package]
+          name = "battler-proto"
+          version.workspace = true
+          edition.workspace = true
+          [dependencies]
+          battler-sim = { workspace = true }
+          serde = { version = "1", features = ["derive"] }
+          postcard = { version = "1", default-features = false, features = ["use-std"] }
+          T
+          cat > /tmp/ws/crates/server/Cargo.toml <<'T'
+          [package]
+          name = "battler-server"
+          version.workspace = true
+          edition.workspace = true
+          [dependencies]
+          battler-proto = { path = "../proto" }
+          axum = { version = "0.8", features = ["ws"] }
+          tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+          T
+          touch /tmp/ws/crates/proto/src/lib.rs
+          echo 'fn main() {}' > /tmp/ws/crates/server/src/main.rs
+          cd /tmp/ws && cargo generate-lockfile && cargo vendor --versioned-dirs vendor > /dev/null
+          du -sh vendor
+      - name: Push
+        run: |
+          set -e
+          cd /tmp/ws
+          git init -q -b vendor-out && git add vendor Cargo.lock
+          git -c user.name=ci -c user.email=ci@example.com commit -qm "vendored sources"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" vendor-out
