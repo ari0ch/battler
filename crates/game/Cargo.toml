@@ -9,10 +9,22 @@ publish = false
 
 [dependencies]
 battler-sim.workspace = true
+battler-proto.workspace = true
 bevy.workspace = true
+# A WebSocket client for both the browser and native builds (online play).
+ewebsock = "0.8"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { workspace = true, features = ["web"] }
+# Browser APIs: the page URL (invite links), localStorage (name, rejoin), and
+# calling the small JS helpers in index.html.
+web-sys = { version = "0.3", features = ["Window", "Location", "Storage"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+
+# Native builds reach the server over TLS (wss://), which needs a crypto backend.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ewebsock = { version = "0.8", features = ["tls"] }
 
 [lints]
 workspace = true

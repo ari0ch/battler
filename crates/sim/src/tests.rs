@@ -1154,24 +1154,6 @@ fn banners_count_their_class_for_synergies() {
     assert_eq!(syn.count(Class::Berserker), 1, "still counts as its own class");
 }
 
-#[test]
-fn scouts_map_moves_forward_on_its_own_half_only() {
-    let setup = |x: i32| {
-        let mut b = Battle::new(8, 1, 50, 0);
-        let id = add_with(&mut b, Team::Player, x, 0, Grub, &[], &[Item::ScoutsMap]);
-        b.scout_ahead();
-        unit_of(&b, id).pos.x
-    };
-    assert_eq!(setup(1), 2);
-    assert_eq!(setup(3), 3, "the midline stops it");
-    // Blocked by an ally in front.
-    let mut b = Battle::new(8, 1, 50, 0);
-    let scout = add_with(&mut b, Team::Player, 1, 0, Grub, &[], &[Item::ScoutsMap]);
-    add(&mut b, Team::Player, 2, 0, BramGatewarden, &[]);
-    b.scout_ahead();
-    assert_eq!(unit_of(&b, scout).pos.x, 1);
-}
-
 // ----- Pathfinding ------------------------------------------------------------
 
 fn moved_to(events: &[Event], unit: UnitId) -> Option<Pos> {

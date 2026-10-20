@@ -16,6 +16,7 @@ use crate::{Ability, Character, Class, Level, UnitKind};
 
 /// A percentage threshold picked from a dropdown in the editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Threshold {
     P25,
     P50,
@@ -34,6 +35,7 @@ impl Threshold {
 
 /// A team-wide signal colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Signal {
     Red,
     Blue,
@@ -54,6 +56,7 @@ pub const WEAK_PERCENT: u32 = 30;
 
 /// The condition half of a rule card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Condition {
     /// Always true. Shown in the editor as an empty condition slot.
     Always,
@@ -83,6 +86,7 @@ pub enum Condition {
 
 /// How an action picks its target. Ties break by distance, then unit id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Target {
     /// The unit the card's condition spotted: the weak enemy for `enemy weak`,
     /// the hurt ally for `ally HP below`, the attacker for `was hit`, and so on.
@@ -101,6 +105,7 @@ pub enum Target {
 
 /// The action half of a rule card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Action {
     // Shared actions.
     /// Basic attack on the target, if it is within range.
@@ -396,6 +401,7 @@ impl Unlocks {
 
 /// One rule card: when `condition` holds, try `action`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Node {
     pub condition: Condition,
     pub action: Action,
@@ -424,6 +430,7 @@ pub enum CardRef {
 
 /// A unit's program: its rule cards, top to bottom.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Program {
     nodes: Vec<Node>,
 }

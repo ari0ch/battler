@@ -16,6 +16,8 @@ pub mod economy;
 mod lobby;
 mod player;
 mod pool;
+mod step;
+pub mod timing;
 
 #[cfg(test)]
 mod tests;
@@ -26,12 +28,14 @@ use crate::program::ProgramError;
 use crate::{Battle, Character, Class, Item, ItemSlots, Level, Pos, Program, Team, UnitSpec, Wave};
 use economy::*;
 
-pub use lobby::{Applied, Command, Lobby, RoundKind, round_kind};
+pub use lobby::{Applied, Command, Lobby, RoundKind, Seat, round_kind};
 pub use player::Player;
 pub use pool::Pool;
+pub use step::Step;
 
 /// Identifies a player within a lobby (also their index in it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PlayerId(pub usize);
 
 /// Identifies one owned unit for the whole run, even as it moves around.
@@ -66,6 +70,7 @@ impl OwnedUnit {
 
 /// Where a unit sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Location {
     Bench(usize),
     Board(Pos),
@@ -126,6 +131,8 @@ pub enum RunError {
     ItemSlotsFull,
     /// Nothing equipped in that slot.
     EmptyItemSlot,
+    /// There is no locked-in round to resolve.
+    NoBattle,
 }
 
 impl fmt::Display for RunError {
@@ -147,6 +154,7 @@ impl fmt::Display for RunError {
             RunError::NoItem(_) => write!(f, "that item isn't in your stash"),
             RunError::ItemSlotsFull => write!(f, "both item slots are taken"),
             RunError::EmptyItemSlot => write!(f, "nothing equipped there"),
+            RunError::NoBattle => write!(f, "no battle to resolve"),
         }
     }
 }
@@ -186,7 +194,6 @@ impl BattleSetup {
                 }
             }
         }
-        battle.scout_ahead();
         battle
     }
 }

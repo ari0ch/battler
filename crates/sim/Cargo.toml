@@ -7,8 +7,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Intentionally empty. The sim must stay pure Rust so it is fast to test,
-# deterministic, and reusable (e.g. a headless PvP server later).
+# The sim stays pure Rust so it is fast to test, deterministic and reusable.
+# The one exception is optional: with the `serde` feature, commands and the
+# step log can be (de)serialized for multiplayer. Off by default, so the sim's
+# own tests and the balance harness build with no dependencies at all.
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde"]
 
 [lints]
 workspace = true

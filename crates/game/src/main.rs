@@ -10,9 +10,11 @@ mod editor;
 mod effects;
 mod field;
 mod kit;
+mod lobby_room;
 mod menu;
 mod meters;
 mod motion;
+mod net;
 mod planning;
 mod result;
 mod sprites;
@@ -52,6 +54,8 @@ fn main() {
         })
         .add_plugins((
             menu::MenuPlugin,
+            net::NetPlugin,
+            lobby_room::LobbyRoomPlugin,
             planning::PlanningPlugin,
             editor::EditorPlugin,
             battle::BattlePlugin,

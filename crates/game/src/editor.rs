@@ -3,7 +3,7 @@
 //! into cards; clicking a placed block cycles its setting. Every change is
 //! written straight into the run, so a card only "counts" once it has an action.
 
-use battler_sim::run::{Command, Lobby, Location, OwnedUnit, Player};
+use battler_sim::run::{Command, Location, OwnedUnit, Player};
 use battler_sim::{Ability, Action, Character, Condition, Item, Unlocks};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
@@ -12,7 +12,7 @@ use bevy::ui_widgets::Button;
 use crate::cards::{self, action_label, cond_label};
 use crate::kit;
 use crate::sprites::{Sprites, sprite_node};
-use crate::state::{DraftCard, LobbyExt, Planning, RunPhase};
+use crate::state::{DraftCard, GameRun, Planning, RunPhase};
 use crate::ui::{
     self, Block, Clickable, DragSource, DropTarget, Slot, UiAction, color, column, heading, row,
     text,
@@ -55,16 +55,28 @@ pub fn selected_unit<'a>(
 
 /// Loads the selected unit's program into the draft.
 pub fn load_draft(run: &Player, planning: &mut Planning) {
-    planning.draft = selected_unit(run, planning)
-        .map(|(_, u)| cards::program_to_draft(&u.program))
-        .unwrap_or_default();
+    let selected = selected_unit(run, planning);
+    planning.draft = selected.map(|(_, u)| cards::program_to_draft(&u.program)).unwrap_or_default();
+    planning.draft_owner = selected.map(|(_, u)| u.id);
+}
+
+/// Makes sure the draft belongs to the selected unit: drops a selection whose
+/// unit is gone (sold, merged away) and reloads the draft whenever it was
+/// loaded for a different unit. Run after anything that can change either.
+pub fn sync_draft(run: &Player, planning: &mut Planning) {
+    if planning.selected.is_some_and(|id| run.locate(id).is_none()) {
+        planning.selected = None;
+    }
+    if planning.draft_owner != planning.selected {
+        load_draft(run, planning);
+    }
 }
 
 /// Tries a new draft: if the program it makes is legal, keep it and save it
 /// to the unit; otherwise leave everything unchanged and explain why.
-fn try_draft(lobby: &mut Lobby, planning: &mut Planning, draft: Vec<DraftCard>) {
-    let Some((loc, _)) = selected_unit(lobby.me(), planning) else { return };
-    match lobby.act(Command::SetProgram(loc, cards::draft_to_program(&draft))) {
+fn try_draft(run: &mut GameRun, planning: &mut Planning, draft: Vec<DraftCard>) {
+    let Some((loc, _)) = selected_unit(run.me(), planning) else { return };
+    match run.act(Command::SetProgram(loc, cards::draft_to_program(&draft))) {
         Ok(_) => planning.draft = draft,
         Err(e) => planning.toast(e.to_string()),
     }
@@ -85,9 +97,9 @@ fn put(card: &mut DraftCard, block: Block) {
 /// The block replaces whichever half of the card matches its kind, so dropping
 /// an action onto a card's condition half (a near miss) still does what the
 /// player meant, and dropping onto a filled half replaces it.
-pub fn drop_block(lobby: &mut Lobby, planning: &mut Planning, card: usize, block: Block) {
-    let Some((_, unit)) = selected_unit(lobby.me(), planning) else { return };
-    let max = lobby.me().synergies().card_slots(unit.character, unit.level);
+pub fn drop_block(run: &mut GameRun, planning: &mut Planning, card: usize, block: Block) {
+    let Some((_, unit)) = selected_unit(run.me(), planning) else { return };
+    let max = run.me().synergies().card_slots(unit.character, unit.level);
     let mut draft = planning.draft.clone();
     if card >= draft.len() {
         if draft.len() >= max {
@@ -98,47 +110,47 @@ pub fn drop_block(lobby: &mut Lobby, planning: &mut Planning, card: usize, block
     }
     let index = card.min(draft.len() - 1);
     put(&mut draft[index], block);
-    try_draft(lobby, planning, draft);
+    try_draft(run, planning, draft);
 }
 
 /// Clicking a palette block: fill the first card missing that kind of block,
 /// or start a new card.
-pub fn click_block(lobby: &mut Lobby, planning: &mut Planning, block: Block) {
+pub fn click_block(run: &mut GameRun, planning: &mut Planning, block: Block) {
     let first_gap = planning.draft.iter().position(|c| match block {
         Block::Cond(_) => c.cond.is_none(),
         Block::Act(_) => c.act.is_none(),
     });
     let card = first_gap.unwrap_or(planning.draft.len());
-    drop_block(lobby, planning, card, block);
+    drop_block(run, planning, card, block);
 }
 
-pub fn cycle_slot(lobby: &mut Lobby, planning: &mut Planning, card: usize, slot: Slot) {
-    let Some((_, unit)) = selected_unit(lobby.me(), planning) else { return };
+pub fn cycle_slot(run: &mut GameRun, planning: &mut Planning, card: usize, slot: Slot) {
+    let Some((_, unit)) = selected_unit(run.me(), planning) else { return };
     let character = unit.character;
-    let unlocks = lobby.me().unlocks();
+    let unlocks = run.me().unlocks();
     let mut draft = planning.draft.clone();
     let Some(c) = draft.get_mut(card) else { return };
     match slot {
         Slot::Cond => c.cond = c.cond.map(cards::cycle_condition),
         Slot::Act => c.act = c.act.map(|a| cards::cycle_action(a, c.cond, &unlocks, character)),
     }
-    try_draft(lobby, planning, draft);
+    try_draft(run, planning, draft);
 }
 
 /// Takes the block out of one half of a card. A card left with neither half
 /// is removed.
-pub fn remove_block(lobby: &mut Lobby, planning: &mut Planning, card: usize, slot: Slot) {
+pub fn remove_block(run: &mut GameRun, planning: &mut Planning, card: usize, slot: Slot) {
     let mut draft = planning.draft.clone();
     if take(&mut draft, card, slot).is_some() {
-        try_draft(lobby, planning, draft);
+        try_draft(run, planning, draft);
     }
 }
 
 /// Moves a placed block onto another card (one past the end starts a new
 /// card), where it replaces the matching half like a palette drop.
-pub fn move_block(lobby: &mut Lobby, planning: &mut Planning, from: usize, slot: Slot, to: usize) {
-    let Some((_, unit)) = selected_unit(lobby.me(), planning) else { return };
-    let max = lobby.me().synergies().card_slots(unit.character, unit.level);
+pub fn move_block(run: &mut GameRun, planning: &mut Planning, from: usize, slot: Slot, to: usize) {
+    let Some((_, unit)) = selected_unit(run.me(), planning) else { return };
+    let max = run.me().synergies().card_slots(unit.character, unit.level);
     let mut draft = planning.draft.clone();
     let Some(block) = draft.get(from).and_then(|c| match slot {
         Slot::Cond => c.cond.map(Block::Cond),
@@ -158,7 +170,7 @@ pub fn move_block(lobby: &mut Lobby, planning: &mut Planning, from: usize, slot:
     // indices after it, but the destination has already been filled.
     put(&mut draft[to], block);
     take(&mut draft, from, slot);
-    try_draft(lobby, planning, draft);
+    try_draft(run, planning, draft);
 }
 
 /// Empties one half of a card in a draft and returns what was there; drops the
@@ -175,19 +187,19 @@ fn take(draft: &mut Vec<DraftCard>, card: usize, slot: Slot) -> Option<Block> {
     block
 }
 
-pub fn clear_card(lobby: &mut Lobby, planning: &mut Planning, card: usize) {
+pub fn clear_card(run: &mut GameRun, planning: &mut Planning, card: usize) {
     let mut draft = planning.draft.clone();
     if card < draft.len() {
         draft.remove(card);
-        try_draft(lobby, planning, draft);
+        try_draft(run, planning, draft);
     }
 }
 
-pub fn card_up(lobby: &mut Lobby, planning: &mut Planning, card: usize) {
+pub fn card_up(run: &mut GameRun, planning: &mut Planning, card: usize) {
     let mut draft = planning.draft.clone();
     if card > 0 && card < draft.len() {
         draft.swap(card, card - 1);
-        try_draft(lobby, planning, draft);
+        try_draft(run, planning, draft);
     }
 }
 

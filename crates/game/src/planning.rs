@@ -27,7 +27,7 @@ use crate::kit;
 use crate::meters;
 use crate::result::{ResultCountdown, ordinal, spawn_result_popup};
 use crate::sprites::{SPRITE_PX, Sprites, battle_scale, sprite_node};
-use crate::state::{AppState, GameRun, LobbyExt, ME, Planning, Rev, RunPhase, Settings};
+use crate::state::{AppState, GameRun, Planning, Rev, RunPhase, Settings};
 use crate::ui::{
     self, ActionQueue, Clickable, DragSource, DropTarget, PRIMARY, SECONDARY, UiAction, color,
     column, heading, row, text,
@@ -61,19 +61,23 @@ const SLOT: f32 = 66.0;
 const HEADER_H: f32 = 56.0;
 const SHOP_H: f32 = 104.0;
 
-/// Seconds allowed for planning this round.
-pub fn planning_seconds(run: &Player) -> f32 {
-    let units = run.board().len() + run.bench().iter().flatten().count();
-    if units >= 5 { 75.0 } else { 60.0 }
+/// Seconds allowed for planning this round: the server's clock online,
+/// otherwise this player's own allowance.
+pub fn planning_seconds(run: &GameRun) -> f32 {
+    match &run.online {
+        Some(online) => online.clock_total,
+        None => battler_sim::run::timing::planning_ms(run.me()) as f32 / 1000.0,
+    }
 }
 
 fn enter(run: Res<GameRun>, mut planning: ResMut<Planning>, mut rev: ResMut<Rev>) {
-    planning.time_left = planning_seconds(run.0.me());
-    planning.toast = None;
-    if planning.selected.is_some_and(|id| run.0.me().locate(id).is_none()) {
-        planning.selected = None;
+    // Online, the server's clock message already set the time left.
+    if !run.is_online() {
+        planning.time_left = planning_seconds(&run);
     }
-    editor::load_draft(run.0.me(), &mut planning);
+    planning.toast = None;
+    editor::load_draft(run.me(), &mut planning);
+    editor::sync_draft(run.me(), &mut planning);
     rev.bump();
 }
 
@@ -160,7 +164,7 @@ fn tick_timers(
     for mut t in &mut timer_text {
         **t = format!("{}:{:02}", secs / 60, secs % 60);
     }
-    let total = planning_seconds(run.0.me());
+    let total = planning_seconds(&run).max(1.0);
     for mut n in &mut timer_bar {
         n.width = percent(100.0 * planning.time_left / total);
     }
@@ -211,7 +215,7 @@ fn update_cells(
     hover: Res<FieldHover>,
     mut marks: Query<(&CellMark, &mut ImageNode, &mut Visibility)>,
 ) {
-    let selected = editor::selected_unit(run.0.me(), &planning);
+    let selected = editor::selected_unit(run.me(), &planning);
     let reach = match (hovered_ability.0, selected) {
         (Some(a), Some((Location::Board(origin), unit))) => {
             Some((origin, cards::ability_reach(a, unit.character)))
@@ -260,7 +264,7 @@ fn rebuild(
     for e in &roots {
         commands.entity(e).despawn();
     }
-    let lobby = &run.0;
+    let lobby: &GameRun = &run;
     let run = lobby.me();
     // The battle plays on this screen's field, so it is the same screen for
     // the whole run (despawned only when the run ends).
@@ -371,7 +375,8 @@ fn rebuild(
                 }
             },
         );
-        shop(stage, run, &sprites, battle.is_some());
+        let waiting = lobby.online.as_ref().is_some_and(|o| o.ready_sent);
+        shop(stage, run, &sprites, battle.is_some(), waiting);
         notice(stage, &planning);
         if let (None, Some((report, _))) = (battle, &planning.result) {
             spawn_result_popup(stage, lobby, report, &sprites);
@@ -381,7 +386,7 @@ fn rebuild(
 
 fn header(
     stage: &mut ChildSpawnerCommands,
-    lobby: &Lobby,
+    lobby: &GameRun,
     planning: &Planning,
     in_battle: bool,
     settings: &Settings,
@@ -706,7 +711,7 @@ fn square_button(
 }
 
 /// The lobby standings: a narrow sidebar, every player's health, best first.
-fn standings(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
+fn standings(parent: &mut ChildSpawnerCommands, lobby: &GameRun) {
     let mut players: Vec<&Player> = lobby.players().iter().collect();
     players.sort_by_key(|p| {
         (std::cmp::Reverse(p.is_alive()), std::cmp::Reverse(p.hp()), p.placement())
@@ -721,7 +726,7 @@ fn standings(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
         .with_children(|col| {
             col.spawn(heading("Players", 15.0, color::GOLD_LIGHT));
             for p in players {
-                let me = p.id() == ME;
+                let me = p.id() == lobby.my_id;
                 let alive = p.is_alive();
                 let name_ink = if me {
                     color::GOLD_LIGHT
@@ -743,6 +748,13 @@ fn standings(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
                             }
                             r.spawn((Node { flex_grow: 1.0, ..default() }, Pickable::IGNORE))
                                 .with_child(heading(p.name(), 12.0, name_ink));
+                            // Online: who is ready, away, or played by a bot.
+                            if let Some(online) = &lobby.online
+                                && alive
+                                && let Some(mark) = online.marker(p.id(), lobby.is_bot(p.id()))
+                            {
+                                r.spawn(text(mark, 11.0, color::MUTED));
+                            }
                             let right = if alive {
                                 p.hp().to_string()
                             } else {
@@ -767,7 +779,13 @@ fn standings(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
         });
 }
 
-fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites, in_battle: bool) {
+fn shop(
+    stage: &mut ChildSpawnerCommands,
+    run: &Player,
+    sprites: &Sprites,
+    in_battle: bool,
+    waiting: bool,
+) {
     stage
         .spawn((
             Node {
@@ -902,12 +920,16 @@ fn shop(stage: &mut ChildSpawnerCommands, run: &Player, sprites: &Sprites, in_ba
                     b.spawn(heading(REROLL_COST.to_string(), 15.0, color::TEXT));
                     b.spawn(text("D", 12.0, color::MUTED));
                 });
+                // Online, Ready is a vote: the round starts once everyone is ready.
+                let (label, skin) =
+                    if waiting { ("Waiting...", SECONDARY) } else { ("Ready!", PRIMARY) };
+                let ink = if waiting { color::TEXT } else { color::ON_GOLD };
                 col.spawn(ui::button(
                     UiAction::Ready,
-                    PRIMARY,
+                    skin,
                     Node { width: percent(100), height: px(50), ..default() },
                 ))
-                .with_child(heading("Ready!", 20.0, color::ON_GOLD));
+                .with_child(heading(label, 20.0, ink));
             });
         });
 }
@@ -1049,7 +1071,7 @@ fn up_arrow(parent: &mut ChildSpawnerCommands, lobby: &Lobby, battle: Option<&Pl
 /// can be clicked, dragged and hovered themselves.
 fn planning_field(
     parent: &mut ChildSpawnerCommands,
-    lobby: &Lobby,
+    lobby: &GameRun,
     planning: &Planning,
     sprites: &Sprites,
 ) {

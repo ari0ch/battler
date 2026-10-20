@@ -47,6 +47,7 @@ pub fn round_kind(round: u32) -> RoundKind {
 /// A change a player wants to make during planning. Humans and bots both send
 /// these; nothing else changes a player's board.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Command {
     Buy(usize),
     Sell(Location),
@@ -88,6 +89,20 @@ pub enum Applied {
     Unequipped,
 }
 
+/// Who sits in one seat of a lobby: a named human, or a bot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Seat {
+    pub name: String,
+    pub bot: bool,
+}
+
+impl Seat {
+    pub fn human(name: impl Into<String>) -> Self {
+        Self { name: name.into(), bot: false }
+    }
+}
+
 /// One battle of the round. `home` fights on the left.
 #[derive(Debug, Clone)]
 struct Matchup {
@@ -117,18 +132,33 @@ impl Lobby {
     /// A lobby of [`LOBBY_SIZE`] players: `humans` humans (ids from 0, named
     /// "You" for the first) and bots for the rest. Bots plan straight away.
     pub fn new(seed: u64, humans: usize) -> Self {
+        let seats: Vec<Seat> =
+            (0..humans).map(|i| Seat::human(if i == 0 { "You" } else { "Player" })).collect();
+        Self::with_seats(seed, &seats)
+    }
+
+    /// A lobby whose first seats are `seats` (in player id order); any seats
+    /// left over, up to [`LOBBY_SIZE`], are filled with named bots.
+    ///
+    /// Everything that follows depends only on the seed and the seats, which
+    /// is what lets every client of a multiplayer game build the same lobby.
+    ///
+    /// # Panics
+    /// If there are more than [`LOBBY_SIZE`] seats.
+    pub fn with_seats(seed: u64, seats: &[Seat]) -> Self {
+        assert!(seats.len() <= LOBBY_SIZE, "at most {LOBBY_SIZE} seats");
         let mut rng = Rng::new(seed);
         let mut pool = Pool::new();
         let mut players = Vec::new();
         let mut bots = Vec::new();
         for i in 0..LOBBY_SIZE {
-            let name = if i < humans {
-                if i == 0 { "You" } else { "Player" }
-            } else {
-                BOT_NAMES[(i - humans) % BOT_NAMES.len()]
+            let (name, bot) = match seats.get(i) {
+                Some(seat) => (seat.name.clone(), seat.bot),
+                None => (BOT_NAMES[(i - seats.len()) % BOT_NAMES.len()].to_string(), true),
             };
             players.push(Player::new(PlayerId(i), name, rng.next_u64(), &mut pool));
-            bots.push((i >= humans).then(|| Bot::new(rng.next_u64())));
+            // `bool::then` runs the closure (and so draws a seed) only for bots.
+            bots.push(bot.then(|| Bot::new(rng.next_u64())));
         }
         let mut lobby = Self {
             seed,
@@ -142,6 +172,26 @@ impl Lobby {
         };
         lobby.begin_planning();
         lobby
+    }
+
+    /// Hands a seat to a bot (a human who left) or back to its human.
+    ///
+    /// A bot that takes over during planning plans its turn straight away.
+    /// Its seed comes from the lobby seed and the seat, not from the lobby's
+    /// RNG, so the takeover never changes anything else in the game.
+    pub fn set_bot(&mut self, id: PlayerId, bot: bool) {
+        match (bot, self.bots[id.0].is_some()) {
+            (true, false) => {
+                let salt = 0x9e37_79b9_7f4a_7c15_u64.wrapping_mul(id.0 as u64 + 1);
+                let mut bot = Bot::new(Rng::new(self.seed ^ salt).next_u64());
+                if !self.in_battle() && !self.is_over() && self.players[id.0].is_alive() {
+                    bot.plan(self, id);
+                }
+                self.bots[id.0] = Some(bot);
+            }
+            (false, true) => self.bots[id.0] = None,
+            _ => {}
+        }
     }
 
     // ----- Reading state -------------------------------------------------
@@ -163,6 +213,45 @@ impl Lobby {
     }
     pub fn is_bot(&self, id: PlayerId) -> bool {
         self.bots[id.0].is_some()
+    }
+    /// The longest battle of the locked-in round, in ticks, or `None` before
+    /// [`Lobby::start_round`]. Battles are deterministic, so playing each one
+    /// out here gives exactly the length every client will see.
+    pub fn longest_battle_ticks(&self) -> Option<u32> {
+        let matchups = self.matchups.as_ref()?;
+        Some(
+            matchups
+                .iter()
+                .map(|m| {
+                    let mut battle = m.setup.build();
+                    battle.run_to_end();
+                    battle.tick()
+                })
+                .max()
+                .unwrap_or(0),
+        )
+    }
+    /// A fingerprint of the whole lobby state, for checking that two copies of
+    /// a lobby (the server's and a client's) still agree.
+    ///
+    /// It hashes the `Debug` text of the lobby with 64-bit FNV-1a. That text
+    /// covers every field, and it is stable because the sim never stores
+    /// hash-ordered collections. Writing straight into the hasher through
+    /// [`std::fmt::Write`] avoids building the (long) string first.
+    pub fn state_hash(&self) -> u64 {
+        use std::fmt::Write;
+        struct Fnv(u64);
+        impl Write for Fnv {
+            fn write_str(&mut self, s: &str) -> std::fmt::Result {
+                for byte in s.bytes() {
+                    self.0 = (self.0 ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+                }
+                Ok(())
+            }
+        }
+        let mut fnv = Fnv(0xcbf2_9ce4_8422_2325);
+        write!(fnv, "{self:?}").expect("writing to a hasher can't fail");
+        fnv.0
     }
     /// Copies of a character left in the shared pool.
     pub fn pool_remaining(&self, character: Character) -> u32 {

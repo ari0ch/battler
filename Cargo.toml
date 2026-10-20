@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/sim", "crates/game", "crates/server"]
+members = ["crates/sim", "crates/proto", "crates/game", "crates/server"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ repository = "https://github.com/ari0ch/battler"
 
 [workspace.dependencies]
 battler-sim = { path = "crates/sim" }
+battler-proto = { path = "crates/proto" }
 # Pinned on purpose: Bevy is pre-1.0 and breaks APIs every release.
 # Upgrade deliberately, following the migration guide.
 #

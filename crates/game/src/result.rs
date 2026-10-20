@@ -10,7 +10,7 @@ use crate::cards;
 use crate::kit;
 use crate::planning::spawn_pips;
 use crate::sprites::{Sprites, sprite_node};
-use crate::state::{AppState, GameRun, LobbyExt, Rev};
+use crate::state::{AppState, GameRun, Rev};
 use crate::ui::{
     self, PRIMARY, SECONDARY, UiAction, color, column, heading, row, spawn_button, text,
 };
@@ -206,7 +206,7 @@ fn rebuild_game_over(
         return;
     }
     let Some(run) = run else { return };
-    let lobby = &run.0;
+    let lobby: &GameRun = &run;
     let run = lobby.me();
     for e in &roots {
         commands.entity(e).despawn();

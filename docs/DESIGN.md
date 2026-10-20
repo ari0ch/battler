@@ -248,7 +248,6 @@ visible whenever the program pane is open.
 | Lucky Coin | Common | +10% crit chance |
 | Healing Draught | Common | the first time below 40% HP, heals 30% of max HP |
 | Whetstone | Common | the first attack each battle deals double damage |
-| Scout's Map | Common | starts the battle one row further forward (if free) |
 | Spyglass | Rare | +1 range |
 | Vampire Fang | Rare | heals 20% of the damage it deals |
 | Spiked Buckler | Rare | reflects 20% of melee damage taken |
@@ -381,23 +380,43 @@ whose digits stay distinct (2 vs 8, percentages on cards, gold), at 1.2x the ask
   15**, so level 8 and Epic-heavy shops are rarely seen; the XP curve may need to speed
   up to match.
 
-### Multiplayer (in design, Oct 2026)
+### Multiplayer (decided and built, Oct 2026)
 
-- **Hosting (decided):** a dedicated Rust server, `crates/server`, on Render's free plan.
+- **Hosting:** a dedicated Rust server, `crates/server`, on Render's free plan
+  (`render.yaml`, Docker, Frankfurt), at `wss://battler-server.onrender.com/ws`.
   Considered: peer-to-peer WebRTC with one player's browser as host (still needs
-  signalling and TURN servers; the host's hidden tab stalls Bevy's frame loop unless the
-  host logic runs in a Web Worker; the game ends if the host leaves) and Cloudflare
-  Durable Objects. Fly.io and Koyeb no longer have free plans. The server is a plain
-  binary in a Dockerfile, so it can move host easily.
-- **Proposed model:** the server holds the authoritative `Lobby`, puts every command in
-  one order and broadcasts the ordered log; every client applies the same log to its own
-  copy (the sim is deterministic) and plays its battle locally from the `BattleSetup`.
-  State hashes after each round catch desyncs; rejoining replays the seed plus log.
-- **Free-plan quirks:** the service sleeps after 15 idle minutes (WebSocket messages count
-  as activity) and takes about a minute to wake, so the web build will ping `/health` on
-  page load. Render may restart free services, which ends rooms in progress.
-- **Still to decide:** disconnect policy, trust (every client sees all state), round
-  pacing, an optional `serde` feature on the sim, first-version scope (room codes only).
+  signalling and TURN servers; a hidden host tab stalls Bevy's frame loop unless the host
+  logic runs in a Web Worker; the game ends if the host leaves) and Cloudflare Durable
+  Objects. Fly.io and Koyeb no longer have free plans. The server is a plain binary in a
+  Dockerfile, so it can move host easily.
+- **Model: the server orders, everyone replays.** The server holds the authoritative
+  `Lobby` and decides the order of `Step`s (a player's command, round start, round
+  resolve, a bot taking a seat). It sends the seed and seats once, then each step; every
+  client applies the same steps to its own lobby (the sim is deterministic) and plays
+  its own battle locally. After each round the server sends a state hash; a client that
+  disagrees asks for the whole log again (`Resync`). Rejoining is the same: seed, seats,
+  log. Messages are postcard-encoded (`crates/proto`) and numbered per connection so the
+  client can restore their order. Commands appear on screen at once and are rolled back
+  if the server refuses them (another player bought the last copy first).
+- **Rooms:** private, joined with a 4-letter code or an invite link (`?room=CODE`); no
+  public matchmaking and no accounts. Names: ASCII, at most 12 characters, made unique
+  in the room. The host starts the game (alone is fine) and can remove players while
+  waiting; bots fill the empty seats.
+- **Round pacing:** planning ends when every connected, living human is Ready, or when
+  the clock runs out (the longest allowance of any human). The battle phase ends exactly
+  when the longest battle of the round has finished playing at 1x (the server plays
+  every battle out when the round starts), plus a short allowance for network delay.
+  Faster playback (2x, 4x, Skip) just means waiting for the others.
+- **Disconnects:** a disconnected player's board keeps fighting as it is. After 3 rounds
+  away a bot takes the seat (and plans at once); the player can still come back with
+  their token (kept in the browser) and take the seat back. Pressing Leave hands the
+  seat to a bot straight away. Rooms with nobody connected close after 5 minutes.
+- **Trust:** every client knows the whole state (including other players' shops). Fine
+  for games among friends; a thin-client design would be needed for strangers.
+- **Free-plan quirks:** the service sleeps after 15 idle minutes (WebSocket messages
+  count as activity; clients ping every 25 s) and takes about a minute to wake, so the
+  page pings `/health` while the game downloads. Render may restart free services, which
+  ends rooms in progress.
 
 ## Open questions
 

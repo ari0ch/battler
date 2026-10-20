@@ -9,7 +9,11 @@ publish = false
 
 [dependencies]
 battler-sim.workspace = true
+battler-proto.workspace = true
 # The web framework: routing plus WebSocket upgrades.
 axum = { version = "0.8", features = ["ws"] }
 # The async runtime axum runs on.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+
+[lints]
+workspace = true

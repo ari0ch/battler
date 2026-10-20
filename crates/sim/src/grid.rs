@@ -1,5 +1,6 @@
 /// A cell on the battle grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Pos {
     pub x: i32,
     pub y: i32,

@@ -162,13 +162,12 @@ fn character_back_png(c: Character) -> &'static [u8] {
 }
 
 /// Every item icon, in the order [`item_icon_index`] uses.
-const ITEM_ICONS: [(&str, &[u8]); 19] = [
+const ITEM_ICONS: [(&str, &[u8]); 18] = [
     ("iron sword", include_bytes!("../assets/ui/items/iron_sword.png")),
     ("leather jerkin", include_bytes!("../assets/ui/items/leather_jerkin.png")),
     ("lucky coin", include_bytes!("../assets/ui/items/lucky_coin.png")),
     ("healing draught", include_bytes!("../assets/ui/items/healing_draught.png")),
     ("whetstone", include_bytes!("../assets/ui/items/whetstone.png")),
-    ("scout's map", include_bytes!("../assets/ui/items/scouts_map.png")),
     ("spyglass", include_bytes!("../assets/ui/items/spyglass.png")),
     ("vampire fang", include_bytes!("../assets/ui/items/vampire_fang.png")),
     ("spiked buckler", include_bytes!("../assets/ui/items/spiked_buckler.png")),
@@ -194,16 +193,15 @@ fn item_icon_index(item: Item) -> usize {
         LuckyCoin => 2,
         HealingDraught => 3,
         Whetstone => 4,
-        ScoutsMap => 5,
-        Spyglass => 6,
-        VampireFang => 7,
-        SpikedBuckler => 8,
-        Hourglass => 9,
-        PhoenixFeather => 10,
-        TwinBlades => 11,
-        Aegis => 12,
+        Spyglass => 5,
+        VampireFang => 6,
+        SpikedBuckler => 7,
+        Hourglass => 8,
+        PhoenixFeather => 9,
+        TwinBlades => 10,
+        Aegis => 11,
         Banner(class) => {
-            13 + match class {
+            12 + match class {
                 Class::Knight => 0,
                 Class::Ranger => 1,
                 Class::Mage => 2,
