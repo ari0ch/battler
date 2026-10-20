@@ -249,8 +249,13 @@ fn on_drag_end(
     t.translation = Val2::ZERO;
     commands.entity(ev.entity).remove::<(GlobalZIndex, Dragging)>();
     if let (true, DragSource::Placed(card, slot)) = (dragging, *source) {
-        // Drops are sent before the drag ends, so any move is queued already.
-        let moved = queue.0.iter().any(|a| matches!(a, UiAction::Drop(s, _) if *s == *source));
+        // Drops are sent before the drag ends, so a move onto another card is
+        // queued already. Landing anywhere else (the board, the bench, the
+        // shop, the palette) takes the block out.
+        let moved = queue
+            .0
+            .iter()
+            .any(|a| matches!(a, UiAction::Drop(s, DropTarget::Card(_)) if *s == *source));
         if !moved {
             queue.0.push(UiAction::RemoveBlock(card, slot));
         }
