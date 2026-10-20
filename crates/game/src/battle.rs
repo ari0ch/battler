@@ -932,7 +932,7 @@ fn unit_pose(
     Pose { lift: (lift / 2.0).round() * 2.0, lean, tint }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn animate_units(
     pb: Res<Playback>,
     art: Res<Sprites>,
