@@ -11,7 +11,6 @@
 //! | Lucky Coin      | Common | +10% crit chance                                         |
 //! | Healing Draught | Common | first time below 40% HP, heals 30% of max HP             |
 //! | Whetstone       | Common | first hit each battle deals double damage                |
-//! | Scout's Map     | Common | starts one row further forward (if free, own half)       |
 //! | Spyglass        | Rare   | +1 range                                                 |
 //! | Vampire Fang    | Rare   | heals 20% of the damage it deals                         |
 //! | Spiked Buckler  | Rare   | reflects 20% of melee damage taken                       |
@@ -36,7 +35,6 @@ pub enum Item {
     LuckyCoin,
     HealingDraught,
     Whetstone,
-    ScoutsMap,
     Spyglass,
     VampireFang,
     SpikedBuckler,
@@ -49,13 +47,12 @@ pub enum Item {
 }
 
 impl Item {
-    pub const COMMON: [Item; 6] = [
+    pub const COMMON: [Item; 5] = [
         Item::IronSword,
         Item::LeatherJerkin,
         Item::LuckyCoin,
         Item::HealingDraught,
         Item::Whetstone,
-        Item::ScoutsMap,
     ];
     pub const RARE: [Item; 4] =
         [Item::Spyglass, Item::VampireFang, Item::SpikedBuckler, Item::Hourglass];
@@ -66,9 +63,7 @@ impl Item {
     pub fn rarity(self) -> Rarity {
         use Item::*;
         match self {
-            IronSword | LeatherJerkin | LuckyCoin | HealingDraught | Whetstone | ScoutsMap => {
-                Rarity::Common
-            }
+            IronSword | LeatherJerkin | LuckyCoin | HealingDraught | Whetstone => Rarity::Common,
             Spyglass | VampireFang | SpikedBuckler | Hourglass => Rarity::Rare,
             PhoenixFeather | Banner(_) | TwinBlades | Aegis => Rarity::Epic,
         }
@@ -82,7 +77,6 @@ impl Item {
             LuckyCoin => "Lucky Coin".into(),
             HealingDraught => "Healing Draught".into(),
             Whetstone => "Whetstone".into(),
-            ScoutsMap => "Scout's Map".into(),
             Spyglass => "Spyglass".into(),
             VampireFang => "Vampire Fang".into(),
             SpikedBuckler => "Spiked Buckler".into(),
@@ -103,7 +97,6 @@ impl Item {
             LuckyCoin => "+10% crit chance".into(),
             HealingDraught => "The first time below 40% HP, heals 30% of max HP".into(),
             Whetstone => "The first hit each battle deals double damage".into(),
-            ScoutsMap => "Starts the battle one row further forward, if free".into(),
             Spyglass => "+1 range".into(),
             VampireFang => "Heals 20% of the damage it deals".into(),
             SpikedBuckler => "Reflects 20% of melee damage taken".into(),

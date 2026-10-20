@@ -59,15 +59,6 @@ def whetstone():
     return c.outline()
 
 
-def scouts_map():
-    c = c16()
-    c.rect(2, 3, 13, 12, 'x'); c.rect(2, 3, 13, 4, 'w')
-    c.rect(1, 2, 2, 13, 'c'); c.rect(13, 2, 14, 13, 'c')  # rolled ends
-    c.line(4, 10, 7, 7, 'X'); c.line(7, 7, 9, 8, 'X')       # dotted path
-    c.px(10, 6, 'R'); c.px(11, 5, 'R'); c.px(11, 7, 'R'); c.px(12, 6, 'R'); c.px(11, 6, 'R')
-    return c.outline()
-
-
 def spyglass():
     c = c16()
     c.line(2, 12, 11, 3, 'G'); c.line(3, 13, 12, 4, 'g')
@@ -152,7 +143,7 @@ def aegis():
 
 ICONS = {
     "iron_sword": iron_sword, "leather_jerkin": leather_jerkin, "lucky_coin": lucky_coin,
-    "healing_draught": healing_draught, "whetstone": whetstone, "scouts_map": scouts_map,
+    "healing_draught": healing_draught, "whetstone": whetstone,
     "spyglass": spyglass, "vampire_fang": vampire_fang, "spiked_buckler": spiked_buckler,
     "hourglass": hourglass, "phoenix_feather": phoenix_feather, "twin_blades": twin_blades,
     "aegis": aegis,

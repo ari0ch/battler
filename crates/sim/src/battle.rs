@@ -371,26 +371,6 @@ impl Battle {
         self.outcome
     }
 
-    /// Scout's Map: before the battle starts, each unit carrying one moves one
-    /// row towards the enemy, if that cell is free and still on its own half.
-    /// Units move in id order, so the result never depends on anything else.
-    pub fn scout_ahead(&mut self) {
-        let half = self.width / 2;
-        for i in 0..self.units.len() {
-            let u = &self.units[i];
-            if !u.has_item(Item::ScoutsMap) {
-                continue;
-            }
-            let (to, own_half) = match u.team {
-                Team::Player => (Pos::new(u.pos.x + 1, u.pos.y), u.pos.x + 1 < half),
-                Team::Enemy => (Pos::new(u.pos.x - 1, u.pos.y), u.pos.x > half),
-            };
-            if own_half && self.in_bounds(to) && !self.is_occupied(to) {
-                self.units[i].pos = to;
-            }
-        }
-    }
-
     pub(crate) fn in_bounds(&self, p: Pos) -> bool {
         (0..self.width).contains(&p.x) && (0..self.height).contains(&p.y)
     }

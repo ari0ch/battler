@@ -79,5 +79,15 @@
       <div id="loader-track"><div id="loader-bar"></div></div>
       <div id="loader-label">Loading...</div>
     </div>
+    <script>
+      // The multiplayer server sleeps when idle (free hosting) and takes about
+      // a minute to wake. Wake it while the game downloads, so it is usually
+      // ready by the time someone hosts or joins.
+      fetch("https://battler-server.onrender.com/health", { mode: "no-cors" }).catch(() => {});
+      // Called from the game (net.rs) to copy an invite link.
+      window.battlerCopy = (text) => {
+        if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+      };
+    </script>
   </body>
 </html>

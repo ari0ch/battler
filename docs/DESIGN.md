@@ -248,7 +248,6 @@ visible whenever the program pane is open.
 | Lucky Coin | Common | +10% crit chance |
 | Healing Draught | Common | the first time below 40% HP, heals 30% of max HP |
 | Whetstone | Common | the first attack each battle deals double damage |
-| Scout's Map | Common | starts the battle one row further forward (if free) |
 | Spyglass | Rare | +1 range |
 | Vampire Fang | Rare | heals 20% of the damage it deals |
 | Spiked Buckler | Rare | reflects 20% of melee damage taken |

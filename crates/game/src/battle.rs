@@ -16,7 +16,7 @@ use crate::kit;
 use crate::motion::{self, Body};
 use crate::planning::spawn_pips;
 use crate::sprites::{SPRITE_PX, Sprites, battle_scale, sprite_node};
-use crate::state::{AppState, GameRun, LobbyExt, Planning, Rev, RunPhase, Settings};
+use crate::state::{AppState, GameRun, Planning, Rev, RunPhase, Settings};
 use crate::ui::{
     self, SECONDARY, TOGGLED, UiAction, color, column, heading, row, spawn_button, text,
 };
@@ -53,10 +53,10 @@ const TRACE_BLUE: Color = Color::srgb(0.173, 0.373, 0.604);
 const TRACE_RED: Color = Color::srgb(0.557, 0.165, 0.165);
 const TRACE_FIRED: Color = Color::srgb(0.541, 0.290, 0.0);
 
-/// Real seconds per tick at 1x speed.
-const TICK_SECONDS: f32 = 0.5;
+/// Real seconds per tick at 1x speed (shared with the server's round clock).
+const TICK_SECONDS: f32 = battler_sim::run::timing::TICK_MS as f32 / 1000.0;
 /// Pause on the final state before moving on.
-const END_PAUSE: f32 = 1.2;
+const END_PAUSE: f32 = battler_sim::run::timing::END_PAUSE_MS as f32 / 1000.0;
 /// Roughly a cell's width on screen, for sizing spell effects.
 const CELL: f32 = 72.0;
 /// A unit's node: its feet are at the bottom centre; sprite and bars overhang.
@@ -408,7 +408,7 @@ fn advance(
     mut pb: ResMut<Playback>,
     mut run: Option<ResMut<GameRun>>,
     mut next_app: ResMut<NextState<AppState>>,
-    next_phase: Option<ResMut<NextState<RunPhase>>>,
+    mut next_phase: Option<ResMut<NextState<RunPhase>>>,
     board: Query<Entity, With<BoardLayer>>,
     mut tick_text: Query<&mut Text, With<TickText>>,
     mut planning: ResMut<Planning>,
@@ -460,23 +460,55 @@ fn advance(
         if pb.replay {
             next_app.set(AppState::GameOver);
         } else if let Some(run) = run.as_mut() {
-            // The lobby re-plays every battle of the round from its setup, so
-            // this result matches the one just watched.
-            run.0.resolve();
-            let report = run.0.me().history().last().expect("just played").1.clone();
-            planning.level_up(&report.level_ups);
-            planning.show_result(report);
-            // Straight back to planning: the next timer starts now, with the
-            // result as a pop-up over it. Knocked out, or the lobby is over:
-            // the run summary.
-            if run.0.me().is_alive() && !run.0.is_over() {
-                if let Some(mut next) = next_phase {
-                    next.set(RunPhase::Planning);
-                }
+            if run.is_online() {
+                // Online, the server resolves the round once the longest
+                // battle in the lobby has finished (see `net.rs`).
+                planning.toast("Waiting for the other battles...");
             } else {
-                next_app.set(AppState::GameOver);
+                // The lobby re-plays every battle of the round from its setup,
+                // so this result matches the one just watched.
+                run.lobby.resolve();
+                finish_round(&**run, &mut planning, next_phase.as_deref_mut(), &mut next_app);
             }
         }
+    }
+}
+
+impl Playback {
+    /// Stops playback where it is (online, when the server moves on).
+    pub fn finish(&mut self) {
+        self.done = true;
+    }
+}
+
+/// Starts watching this player's battle of the round just locked in: returns
+/// the playback to insert. Docks the program panel and closes any leftover
+/// result pop-up, since the battle plays on the field.
+pub fn begin_battle(run: &GameRun, planning: &mut Planning) -> Option<Playback> {
+    let (setup, _, opponent) = run.battle_for(run.my_id)?;
+    planning.editor_open = false;
+    planning.result = None;
+    Some(Playback::new(setup.clone(), false, Some(opponent)))
+}
+
+/// After a round has resolved: show its result over the next planning phase,
+/// or the run summary if this player is out or the lobby is over.
+pub fn finish_round(
+    run: &GameRun,
+    planning: &mut Planning,
+    next_phase: Option<&mut NextState<RunPhase>>,
+    next_app: &mut NextState<AppState>,
+) {
+    if let Some((_, report)) = run.me().history().last() {
+        planning.level_up(&report.level_ups);
+        planning.show_result(report.clone());
+    }
+    if run.me().is_alive() && !run.is_over() {
+        if let Some(next) = next_phase {
+            next.set(RunPhase::Planning);
+        }
+    } else {
+        next_app.set(AppState::GameOver);
     }
 }
 

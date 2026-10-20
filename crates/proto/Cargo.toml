@@ -1,0 +1,17 @@
+[package]
+name = "battler-proto"
+description = "The messages Battler's game client and multiplayer server exchange"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+battler-sim = { workspace = true, features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+# A compact binary format for serde, small in WASM.
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+
+[lints]
+workspace = true

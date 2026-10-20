@@ -9,6 +9,8 @@ use bevy::prelude::*;
 pub enum AppState {
     #[default]
     MainMenu,
+    /// Waiting with other players for the host to start an online game.
+    Room,
     InRun,
     GameOver,
     /// Watching a past battle from the run summary.
@@ -26,33 +28,57 @@ pub enum RunPhase {
     Battle,
 }
 
-/// The lobby in progress (kept through game over for the summary). The human
-/// is always player 0; the other seven are bots.
-#[derive(Resource)]
-pub struct GameRun(pub Lobby);
-
-/// The human player's id in the lobby.
-pub const ME: PlayerId = PlayerId(0);
-
-/// Shortcuts for the human player.
+/// The lobby in progress (kept through game over for the summary), and which
+/// player in it is this one. Solo, that's player 0 among seven bots; online,
+/// it's whichever seat the server gave us.
 ///
-/// This is an *extension trait*: Rust lets a crate add methods to a type from
-/// another crate (here `Lobby` from `battler-sim`) by implementing its own trait
-/// for it. The methods are only visible where the trait is imported.
-pub trait LobbyExt {
-    /// The human player.
-    fn me(&self) -> &Player;
-    /// Sends a command as the human player.
-    fn act(&mut self, command: Command) -> Result<Applied, RunError>;
+/// `GameRun` derefs to the [`Lobby`], so screens read it like a lobby
+/// (`run.round()`, `run.players()`). It deliberately does *not* deref mutably:
+/// every change goes through [`GameRun::act`], which also sends it to the
+/// server when playing online.
+#[derive(Resource)]
+pub struct GameRun {
+    /// What the screens show. Online, that's the server's confirmed lobby plus
+    /// this player's commands still on their way (see [`crate::net::Online`]).
+    pub lobby: Lobby,
+    pub my_id: PlayerId,
+    /// Present when playing online.
+    pub online: Option<crate::net::Online>,
 }
 
-impl LobbyExt for Lobby {
-    fn me(&self) -> &Player {
-        self.player(ME)
+/// `Deref` is the trait behind `*`. Implementing it lets a `&GameRun` be used
+/// where a `&Lobby` is expected (Rust inserts the deref), and lets lobby
+/// methods be called on a `GameRun` directly.
+impl std::ops::Deref for GameRun {
+    type Target = Lobby;
+    fn deref(&self) -> &Lobby {
+        &self.lobby
+    }
+}
+
+impl GameRun {
+    /// A solo run: player 0 against seven bots.
+    pub fn solo(seed: u64) -> Self {
+        Self { lobby: Lobby::new(seed, 1), my_id: PlayerId(0), online: None }
     }
 
-    fn act(&mut self, command: Command) -> Result<Applied, RunError> {
-        self.apply(ME, command)
+    /// This player.
+    pub fn me(&self) -> &Player {
+        self.lobby.player(self.my_id)
+    }
+
+    /// Sends a command as this player. Online, it also goes to the server,
+    /// which has the final say (a refusal rolls it back).
+    pub fn act(&mut self, command: Command) -> Result<Applied, RunError> {
+        let applied = self.lobby.apply(self.my_id, command.clone())?;
+        if let Some(online) = &mut self.online {
+            online.sent(command);
+        }
+        Ok(applied)
+    }
+
+    pub fn is_online(&self) -> bool {
+        self.online.is_some()
     }
 }
 
@@ -101,6 +127,9 @@ pub enum MeterTab {
 #[derive(Resource, Default)]
 pub struct MenuUi {
     pub how_to: bool,
+    /// What's typed in the name and room code boxes.
+    pub name: String,
+    pub code: String,
 }
 
 /// One card being edited. An empty condition means "always".
@@ -125,6 +154,9 @@ pub struct Planning {
     pub toast: Option<(String, f32)>,
     /// The selected unit's cards while the editor is open, including half-built ones.
     pub draft: Vec<DraftCard>,
+    /// The unit `draft` was loaded from. Checked after every action, so the
+    /// program pane can never show one unit's cards while another is selected.
+    pub draft_owner: Option<OwnedId>,
     /// Whether the program panel is open over the field, or docked to a tab.
     pub editor_open: bool,
     /// The last round's result, shown as a pop-up, and seconds left to show it.

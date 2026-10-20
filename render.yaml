@@ -15,6 +15,7 @@ services:
     buildFilter:
       paths:
         - crates/server/**
+        - crates/proto/**
         - crates/sim/**
         - Cargo.toml
         - Cargo.lock

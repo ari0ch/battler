@@ -540,3 +540,94 @@ fn equip_goes_through_the_lobby() {
     lobby.apply(ME, Command::Unequip { from: loc, slot: 0 }).unwrap();
     assert_eq!(lobby.player(ME).stash().len(), before);
 }
+
+// ----- Seats, steps and replays (multiplayer) ---------------------------------
+
+/// Plays a lobby with two humans for a few rounds through [`Step`]s, the way
+/// the server does, and returns the log.
+fn played_log(seed: u64, seats: &[Seat], rounds: u32) -> (Lobby, Vec<Step>) {
+    let mut lobby = Lobby::with_seats(seed, seats);
+    let mut log = Vec::new();
+    let mut push = |lobby: &mut Lobby, step: Step| {
+        if lobby.step(&step).is_ok() {
+            log.push(step);
+        }
+    };
+    for _ in 0..rounds {
+        if lobby.is_over() {
+            break;
+        }
+        for p in 0..seats.len() {
+            let player = PlayerId(p);
+            for command in [Command::Buy(0), Command::Buy(1), Command::Reroll, Command::Buy(2)] {
+                push(&mut lobby, Step::Command { player, command });
+            }
+        }
+        push(&mut lobby, Step::StartRound);
+        push(&mut lobby, Step::Resolve);
+    }
+    (lobby, log)
+}
+
+#[test]
+fn seats_name_the_players_and_bots_fill_the_rest() {
+    let lobby = Lobby::with_seats(1, &[Seat::human("Ari"), Seat::human("Bea")]);
+    assert_eq!(lobby.player(PlayerId(0)).name(), "Ari");
+    assert_eq!(lobby.player(PlayerId(1)).name(), "Bea");
+    assert!(!lobby.is_bot(PlayerId(0)) && !lobby.is_bot(PlayerId(1)));
+    assert!((2..LOBBY_SIZE).all(|i| lobby.is_bot(PlayerId(i))));
+    assert_eq!(lobby.player(PlayerId(2)).name(), "Mossa");
+}
+
+#[test]
+fn replaying_the_log_rebuilds_the_same_lobby() {
+    let seats = [Seat::human("Ari"), Seat::human("Bea")];
+    let (played, log) = played_log(42, &seats, 6);
+    assert!(log.len() > 12, "the humans did things");
+    let mut copy = Lobby::with_seats(42, &seats);
+    copy.replay(&log);
+    assert_eq!(copy.state_hash(), played.state_hash());
+    assert_eq!(copy.round(), played.round());
+    for i in 0..LOBBY_SIZE {
+        let (a, b) = (copy.player(PlayerId(i)), played.player(PlayerId(i)));
+        assert_eq!((a.hp(), a.gold(), a.board().len()), (b.hp(), b.gold(), b.board().len()));
+    }
+}
+
+#[test]
+fn the_state_hash_notices_any_difference() {
+    let seats = [Seat::human("Ari")];
+    let a = Lobby::with_seats(7, &seats);
+    let mut b = Lobby::with_seats(7, &seats);
+    assert_eq!(a.state_hash(), b.state_hash());
+    b.apply(PlayerId(0), Command::Reroll).unwrap();
+    assert_ne!(a.state_hash(), b.state_hash());
+    assert_ne!(a.state_hash(), Lobby::with_seats(8, &seats).state_hash(), "seed matters");
+}
+
+#[test]
+fn a_bot_takes_over_a_seat_and_plans_from_the_next_round() {
+    let seats = [Seat::human("Ari"), Seat::human("Bea")];
+    let mut lobby = Lobby::with_seats(5, &seats);
+    let bea = PlayerId(1);
+    let bea_units =
+        |l: &Lobby| l.player(bea).board().len() + l.player(bea).bench().iter().flatten().count();
+    assert_eq!(bea_units(&lobby), 0);
+    lobby.step(&Step::SetBot { player: bea, bot: true }).unwrap();
+    assert!(lobby.is_bot(bea));
+    assert!(bea_units(&lobby) > 0, "the bot plans straight away");
+    lobby.step(&Step::StartRound).unwrap();
+    lobby.step(&Step::Resolve).unwrap();
+    lobby.step(&Step::SetBot { player: bea, bot: false }).unwrap();
+    assert!(!lobby.is_bot(bea));
+}
+
+#[test]
+fn resolving_without_a_round_is_refused() {
+    let mut lobby = Lobby::with_seats(3, &[Seat::human("Ari")]);
+    assert_eq!(lobby.step(&Step::Resolve), Err(RunError::NoBattle));
+    lobby.step(&Step::StartRound).unwrap();
+    let ticks = lobby.longest_battle_ticks().expect("round locked in");
+    assert!(ticks > 0);
+    assert_eq!(lobby.step(&Step::Resolve), Ok(None));
+}

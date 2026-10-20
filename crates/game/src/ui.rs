@@ -113,6 +113,20 @@ pub enum UiAction {
     NewRun,
     ToggleHowTo,
     MainMenu,
+    /// Online: open a new room.
+    HostGame,
+    /// Online: join the room whose code is typed in.
+    JoinGame,
+    /// Online: go back to the game this browser was last in.
+    RejoinGame,
+    /// Host only: start the online game.
+    StartGame,
+    /// Host only: remove the player in this seat.
+    Kick(usize),
+    /// Leave the waiting room.
+    LeaveRoom,
+    /// Copy the room's invite link.
+    CopyLink,
     Buy(usize),
     Reroll,
     Ready,

@@ -18,7 +18,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Player {
     id: PlayerId,
-    name: &'static str,
+    name: String,
     /// Drives this player's shop rolls.
     rng: Rng,
     hp: u32,
@@ -40,10 +40,10 @@ pub struct Player {
 
 impl Player {
     /// A fresh player with a full shop drawn from `pool`.
-    pub fn new(id: PlayerId, name: &'static str, seed: u64, pool: &mut Pool) -> Self {
+    pub fn new(id: PlayerId, name: impl Into<String>, seed: u64, pool: &mut Pool) -> Self {
         let mut player = Self {
             id,
-            name,
+            name: name.into(),
             rng: Rng::new(seed),
             hp: START_HP,
             gold: START_GOLD,
@@ -68,8 +68,8 @@ impl Player {
     pub fn id(&self) -> PlayerId {
         self.id
     }
-    pub fn name(&self) -> &'static str {
-        self.name
+    pub fn name(&self) -> &str {
+        &self.name
     }
     pub fn hp(&self) -> u32 {
         self.hp
