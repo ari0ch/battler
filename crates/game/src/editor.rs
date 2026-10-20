@@ -444,9 +444,31 @@ fn items_section(
     sprites: &Sprites,
 ) {
     let ink = Color::srgb(0.420, 0.278, 0.090);
+    // A ruled box with its title, so the items read as their own section.
+    p.spawn((
+        Node {
+            padding: UiRect::all(px(8)),
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(4)),
+            ..column(6.0)
+        },
+        BackgroundColor(Color::srgba(0.42, 0.28, 0.09, 0.08)),
+        BorderColor::all(Color::srgb(0.62, 0.48, 0.28)),
+    ))
+    .with_children(|p| items_contents(p, run, selected, sprites, ink));
+}
+
+fn items_contents(
+    p: &mut ChildSpawnerCommands,
+    run: &Player,
+    selected: Option<(Location, &OwnedUnit)>,
+    sprites: &Sprites,
+    ink: Color,
+) {
+    p.spawn(heading("Items", 13.0, ink));
     p.spawn(Node { align_items: AlignItems::Center, ..row(10.0) }).with_children(|r| {
-        r.spawn(heading("Items", 12.0, ink));
         if let Some((loc, unit)) = selected {
+            r.spawn(text("Equipped", 11.0, color::INK_MUTED));
             for (slot, item) in unit.items.iter().enumerate() {
                 let mut e = r.spawn((
                     Node {
@@ -474,6 +496,7 @@ fn items_section(
         }
     });
     // The stash: drop equipped items here to take them off.
+    p.spawn(text("Spare", 11.0, color::INK_MUTED));
     p.spawn((
         Node {
             flex_wrap: FlexWrap::Wrap,
