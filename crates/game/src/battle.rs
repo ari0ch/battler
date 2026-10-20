@@ -935,7 +935,7 @@ fn unit_pose(
 #[allow(clippy::type_complexity)]
 fn animate_units(
     pb: Res<Playback>,
-    sprites: Res<Sprites>,
+    art: Res<Sprites>,
     mut views: Query<(&UnitView, &mut Node, &mut ZIndex), (Without<HpFill>, Without<Badge>)>,
     mut bars: Query<
         (&HpFill, &mut Node, &mut ImageNode),
@@ -977,7 +977,7 @@ fn animate_units(
     }
     for (s, mut image, mut transform) in &mut sprites {
         let (Some(body), Some(unit)) = (pb.bodies.get(&s.0), battle.unit(s.0)) else { continue };
-        let (handle, flip) = sprites.facing(unit.kind, Facing::from_ground(body.facing));
+        let (handle, flip) = art.facing(unit.kind, Facing::from_ground(body.facing));
         if image.image != handle {
             image.image = handle;
         }
