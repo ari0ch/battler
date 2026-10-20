@@ -1,0 +1,22 @@
+# Render Blueprint: the multiplayer server (crates/server).
+# Render reads this file when the repo is connected as a Blueprint, and
+# redeploys main whenever server-related files change and CI passes.
+services:
+  - type: web
+    name: battler-server
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./crates/server/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - crates/server/**
+        - crates/sim/**
+        - Cargo.toml
+        - Cargo.lock
+        - rust-toolchain.toml
+        - render.yaml
