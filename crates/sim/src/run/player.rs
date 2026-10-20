@@ -11,7 +11,9 @@ use super::{
     BattleSetup, Location, OwnedId, OwnedUnit, PlayerId, RoundReport, RunError, RunStatus,
 };
 use crate::synergy::Synergies;
-use crate::{Character, Level, Pos, Program, Rarity, Rng, Team, UnitSpec, Unlocks};
+use crate::{
+    Character, ITEM_SLOTS, Item, Level, Pos, Program, Rarity, Rng, Team, UnitSpec, Unlocks,
+};
 
 #[derive(Debug, Clone)]
 pub struct Player {
@@ -32,6 +34,8 @@ pub struct Player {
     board: Vec<(Pos, OwnedUnit)>,
     next_id: u32,
     history: Vec<(BattleSetup, RoundReport)>,
+    /// Items owned but not equipped.
+    stash: Vec<Item>,
 }
 
 impl Player {
@@ -53,6 +57,7 @@ impl Player {
             board: Vec::new(),
             next_id: 0,
             history: Vec::new(),
+            stash: Vec::new(),
         };
         player.refresh_shop(pool);
         player
@@ -117,9 +122,16 @@ impl Player {
     pub fn interest_preview(&self) -> u32 {
         interest(self.gold)
     }
-    /// Synergies from the units on the board.
+    /// Synergies from the units on the board (Banners count their class too).
     pub fn synergies(&self) -> Synergies {
-        Synergies::from_characters(self.board.iter().map(|(_, u)| u.character))
+        Synergies::from_members(
+            self.board.iter().map(|(_, u)| (u.character, crate::item::banner_class(&u.items))),
+        )
+    }
+
+    /// Items owned but not equipped, in the order they were found.
+    pub fn stash(&self) -> &[Item] {
+        &self.stash
     }
     /// What the player can currently put in programs.
     pub fn unlocks(&self) -> Unlocks {
@@ -202,7 +214,13 @@ impl Player {
         self.gold -= cost;
         self.shop[slot] = None;
         let id = self.new_id();
-        let unit = OwnedUnit { id, character, level: Level::One, program: Program::default() };
+        let unit = OwnedUnit {
+            id,
+            character,
+            level: Level::One,
+            program: Program::default(),
+            items: [None; ITEM_SLOTS],
+        };
         match free {
             Some(i) => self.bench[i] = Some(unit),
             // A full bench is fine when this copy merges straight away: park it in
@@ -265,9 +283,11 @@ impl Player {
         reached
     }
 
-    /// Sells a unit for the full price of the copies it's made of.
+    /// Sells a unit for the full price of the copies it's made of. Its items
+    /// go back to the stash.
     pub(super) fn sell(&mut self, loc: Location, pool: &mut Pool) -> Result<u32, RunError> {
         let unit = self.take(loc).ok_or(RunError::Empty(loc))?;
+        self.stash.extend(unit.items.iter().flatten());
         pool.give_back(unit.character, unit.level.copies());
         let refund = unit.sell_value();
         self.gold += refund;
@@ -369,13 +389,46 @@ impl Player {
         Ok(())
     }
 
+    /// Equips stash item `item` on the unit at `to`: into `slot` (swapping out
+    /// whatever is there, back to the stash), or the first free slot.
+    pub(super) fn equip(
+        &mut self,
+        item: usize,
+        to: Location,
+        slot: Option<usize>,
+    ) -> Result<(), RunError> {
+        let it = *self.stash.get(item).ok_or(RunError::NoItem(item))?;
+        let unit = self.unit_at(to).ok_or(RunError::Empty(to))?;
+        let slot = match slot {
+            Some(s) if s < ITEM_SLOTS => s,
+            Some(_) => return Err(RunError::EmptyItemSlot),
+            None => unit.items.iter().position(Option::is_none).ok_or(RunError::ItemSlotsFull)?,
+        };
+        self.stash.remove(item);
+        let unit = self.unit_mut(to).expect("checked");
+        if let Some(old) = unit.items[slot].replace(it) {
+            self.stash.push(old);
+        }
+        Ok(())
+    }
+
+    /// Takes the item in `slot` off the unit at `from`, back into the stash.
+    pub(super) fn unequip(&mut self, from: Location, slot: usize) -> Result<(), RunError> {
+        let unit = self.unit_mut(from).ok_or(RunError::Empty(from))?;
+        let item =
+            unit.items.get_mut(slot).and_then(Option::take).ok_or(RunError::EmptyItemSlot)?;
+        self.stash.push(item);
+        Ok(())
+    }
+
     // ----- Round resolution (called by the lobby) ------------------------
 
     /// Applies a round's result: damage, streak, gold, XP. Returns the report,
     /// which is also stored in the history with the battle's setup.
     pub(super) fn settle(&mut self, outcome: RoundOutcome, setup: BattleSetup) -> RoundReport {
-        let RoundOutcome { round, opponent, side, result, ticks, survivors, damage, reward } =
+        let RoundOutcome { round, opponent, side, result, ticks, survivors, damage, reward, loot } =
             outcome;
+        self.stash.extend(loot.iter().copied());
         self.hp = self.hp.saturating_sub(damage);
         // PvE rounds leave streaks alone.
         if !opponent.is_pve() {
@@ -410,6 +463,7 @@ impl Player {
             streak: self.streak,
             level_ups,
             placement: None,
+            loot,
         };
         self.history.push((setup, report.clone()));
         report
@@ -502,10 +556,23 @@ impl Player {
                     // Board copies come first, so the board unit (and its program)
                     // is the one that survives.
                     let target = locs[0];
+                    // The copies' items join the survivor's; any that don't fit
+                    // in its slots go to the stash.
+                    let mut freed: Vec<Item> = Vec::new();
                     for &loc in &locs[1..3] {
-                        self.take(loc);
+                        if let Some(u) = self.take(loc) {
+                            freed.extend(u.items.iter().flatten());
+                        }
                     }
                     let on_board = matches!(target, Location::Board(_));
+                    let unit = self.unit_mut(target).expect("target exists");
+                    for slot in unit.items.iter_mut().filter(|s| s.is_none()) {
+                        if freed.is_empty() {
+                            break;
+                        }
+                        *slot = Some(freed.remove(0));
+                    }
+                    self.stash.extend(freed);
                     let unit = self.unit_mut(target).expect("target exists");
                     unit.level = level.next().expect("only levels 1 and 2 merge");
                     if !on_board {
@@ -538,6 +605,11 @@ impl Player {
     }
 
     #[cfg(test)]
+    pub(super) fn add_to_stash(&mut self, items: &[Item]) {
+        self.stash.extend_from_slice(items);
+    }
+
+    #[cfg(test)]
     pub(super) fn set_hp(&mut self, hp: u32) {
         self.hp = hp;
     }
@@ -556,4 +628,6 @@ pub(super) struct RoundOutcome {
     pub damage: u32,
     /// Gold for winning (win bonus, or a PvE reward).
     pub reward: u32,
+    /// Items dropped (PvE rounds).
+    pub loot: Vec<Item>,
 }

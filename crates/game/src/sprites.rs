@@ -12,7 +12,7 @@
 //! means the web build needs no asset folder or URL handling under the GitHub
 //! Pages `/battler/` prefix.
 
-use battler_sim::{Character, Monster, UnitKind};
+use battler_sim::{Character, Class, Item, Monster, UnitKind};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
@@ -30,6 +30,8 @@ pub struct Sprites {
     monsters: Vec<Handle<Image>>,
     /// Back views (facing north-east); same indexing as `characters`.
     character_backs: Vec<Handle<Image>>,
+    /// Item icons (16x16), by [`item_icon_index`].
+    items: Vec<Handle<Image>>,
 }
 
 impl Sprites {
@@ -48,6 +50,11 @@ impl Sprites {
             UnitKind::Character(c) => self.character(c),
             UnitKind::Monster(m) => self.monster(m),
         }
+    }
+
+    /// An item's icon (16x16: draw at 2x).
+    pub fn item(&self, item: Item) -> Handle<Image> {
+        self.items[item_icon_index(item)].clone()
     }
 
     /// The image and mirroring that show `kind` facing `facing`: the back art
@@ -97,7 +104,8 @@ impl FromWorld for Sprites {
         let monsters = Monster::ALL.into_iter().map(|m| load(m.name(), monster_png(m))).collect();
         let character_backs =
             Character::ALL.into_iter().map(|c| load(c.name(), character_back_png(c))).collect();
-        Self { characters, monsters, character_backs }
+        let items = ITEM_ICONS.iter().map(|(name, png)| load(name, png)).collect();
+        Self { characters, monsters, character_backs, items }
     }
 }
 
@@ -150,6 +158,60 @@ fn character_back_png(c: Character) -> &'static [u8] {
         Grub => include_bytes!("../assets/sprites/back/grub_ironjaw.png"),
         Hilda => include_bytes!("../assets/sprites/back/hilda_bloodaxe.png"),
         Korgath => include_bytes!("../assets/sprites/back/korgath_the_undying.png"),
+    }
+}
+
+/// Every item icon, in the order [`item_icon_index`] uses.
+const ITEM_ICONS: [(&str, &[u8]); 19] = [
+    ("iron sword", include_bytes!("../assets/ui/items/iron_sword.png")),
+    ("leather jerkin", include_bytes!("../assets/ui/items/leather_jerkin.png")),
+    ("lucky coin", include_bytes!("../assets/ui/items/lucky_coin.png")),
+    ("healing draught", include_bytes!("../assets/ui/items/healing_draught.png")),
+    ("whetstone", include_bytes!("../assets/ui/items/whetstone.png")),
+    ("scout's map", include_bytes!("../assets/ui/items/scouts_map.png")),
+    ("spyglass", include_bytes!("../assets/ui/items/spyglass.png")),
+    ("vampire fang", include_bytes!("../assets/ui/items/vampire_fang.png")),
+    ("spiked buckler", include_bytes!("../assets/ui/items/spiked_buckler.png")),
+    ("hourglass", include_bytes!("../assets/ui/items/hourglass.png")),
+    ("phoenix feather", include_bytes!("../assets/ui/items/phoenix_feather.png")),
+    ("twin blades", include_bytes!("../assets/ui/items/twin_blades.png")),
+    ("aegis", include_bytes!("../assets/ui/items/aegis.png")),
+    ("knight banner", include_bytes!("../assets/ui/items/banner_knight.png")),
+    ("ranger banner", include_bytes!("../assets/ui/items/banner_ranger.png")),
+    ("mage banner", include_bytes!("../assets/ui/items/banner_mage.png")),
+    ("cleric banner", include_bytes!("../assets/ui/items/banner_cleric.png")),
+    ("rogue banner", include_bytes!("../assets/ui/items/banner_rogue.png")),
+    ("berserker banner", include_bytes!("../assets/ui/items/banner_berserker.png")),
+];
+
+/// Where an item's icon is in [`ITEM_ICONS`]. Exhaustive, so a new item
+/// without an icon is a compile error.
+fn item_icon_index(item: Item) -> usize {
+    use Item::*;
+    match item {
+        IronSword => 0,
+        LeatherJerkin => 1,
+        LuckyCoin => 2,
+        HealingDraught => 3,
+        Whetstone => 4,
+        ScoutsMap => 5,
+        Spyglass => 6,
+        VampireFang => 7,
+        SpikedBuckler => 8,
+        Hourglass => 9,
+        PhoenixFeather => 10,
+        TwinBlades => 11,
+        Aegis => 12,
+        Banner(class) => {
+            13 + match class {
+                Class::Knight => 0,
+                Class::Ranger => 1,
+                Class::Mage => 2,
+                Class::Cleric => 3,
+                Class::Rogue => 4,
+                Class::Berserker => 5,
+            }
+        }
     }
 }
 

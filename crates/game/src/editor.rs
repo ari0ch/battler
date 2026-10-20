@@ -4,7 +4,7 @@
 //! written straight into the run, so a card only "counts" once it has an action.
 
 use battler_sim::run::{Command, Lobby, Location, OwnedUnit, Player};
-use battler_sim::{Ability, Action, Character, Condition, Unlocks};
+use battler_sim::{Ability, Action, Character, Condition, Item, Unlocks};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::Button;
@@ -219,6 +219,7 @@ pub fn spawn_program_panel(
                 ] {
                     p.spawn(text(line, 13.0, color::INK_MUTED));
                 }
+                items_section(p, run, None, sprites);
                 return;
             };
             let unlocks = run.unlocks();
@@ -226,6 +227,8 @@ pub fn spawn_program_panel(
             cards_list(p, run, planning, unit);
             p.spawn((Node { height: px(2), ..default() }, BackgroundColor(DIVIDER)));
             palette(p, unit.character, &unlocks);
+            p.spawn((Node { height: px(2), ..default() }, BackgroundColor(DIVIDER)));
+            items_section(p, run, Some((loc, unit)), sprites);
             p.spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, Pickable::IGNORE))
                 .with_child(text(
                     "Drag blocks into cards - click one to change it, drag it off to remove it",
@@ -429,6 +432,110 @@ fn slot_box(
         return;
     }
     e.with_child(heading(label, 13.0, ink));
+}
+
+/// The items part of the pane: the selected unit's two slots, then the stash
+/// of unequipped items. Drag items between them (or onto units on the board
+/// and bench); click a stash item to equip it, or an equipped one to take it off.
+fn items_section(
+    p: &mut ChildSpawnerCommands,
+    run: &Player,
+    selected: Option<(Location, &OwnedUnit)>,
+    sprites: &Sprites,
+) {
+    let ink = Color::srgb(0.420, 0.278, 0.090);
+    p.spawn(Node { align_items: AlignItems::Center, ..row(10.0) }).with_children(|r| {
+        r.spawn(heading("Items", 12.0, ink));
+        if let Some((loc, unit)) = selected {
+            for (slot, item) in unit.items.iter().enumerate() {
+                let mut e = r.spawn((
+                    Node {
+                        width: px(40),
+                        height: px(40),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    kit::inset(),
+                    DropTarget::ItemSlot(slot),
+                ));
+                if let Some(item) = *item {
+                    e.insert((
+                        Button,
+                        Hovered::default(),
+                        Clickable(UiAction::Unequip(loc, slot)),
+                        DragSource::Equipped(loc, slot),
+                        Pickable { should_block_lower: false, is_hoverable: true },
+                        item_tooltip(item, "Click or drag off to unequip"),
+                    ))
+                    .with_child(item_icon(sprites, item));
+                }
+            }
+        }
+    });
+    // The stash: drop equipped items here to take them off.
+    p.spawn((
+        Node {
+            flex_wrap: FlexWrap::Wrap,
+            min_height: px(40),
+            row_gap: px(4),
+            column_gap: px(4),
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        DropTarget::Stash,
+    ))
+    .with_children(|w| {
+        if run.stash().is_empty() {
+            w.spawn(text("No spare items. Monsters and bosses drop them.", 11.0, color::INK_FAINT));
+        }
+        for (i, item) in run.stash().iter().enumerate() {
+            let hint = if selected.is_some() {
+                "Click or drag onto a unit to equip"
+            } else {
+                "Drag onto a unit to equip"
+            };
+            w.spawn((
+                Button,
+                Hovered::default(),
+                Clickable(UiAction::EquipStash(i)),
+                DragSource::Stash(i),
+                Pickable { should_block_lower: false, is_hoverable: true },
+                Node {
+                    width: px(36),
+                    height: px(36),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                kit::sliced(kit::rarity_frame(item.rarity()), 6.0),
+                item_tooltip(*item, hint),
+            ))
+            .with_child(item_icon(sprites, *item));
+        }
+    });
+}
+
+/// An item's 16x16 icon at 2x, ignoring the pointer.
+pub fn item_icon(sprites: &Sprites, item: Item) -> impl Bundle {
+    (
+        ImageNode::new(sprites.item(item)),
+        Node { width: px(32), height: px(32), ..default() },
+        Pickable::IGNORE,
+    )
+}
+
+/// Name, rarity and effect.
+pub fn item_tooltip(item: Item, hint: &str) -> ui::Tooltip {
+    ui::Tooltip {
+        title: item.name(),
+        accent: cards::rarity_color(item.rarity()),
+        lines: vec![
+            (format!("{} item", item.rarity().name()), color::MUTED),
+            (item.description(), color::TEXT),
+            (hint.to_string(), color::MUTED),
+        ],
+    }
 }
 
 fn small_button(parent: &mut ChildSpawnerCommands, label: &str, action: UiAction) {

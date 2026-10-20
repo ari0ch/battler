@@ -208,6 +208,61 @@ All numbers in this section and the next are agreed starting points, to tune aft
 - Each round: **5 base**, **+1 for a win**, **interest +1 per 10 gold banked** (max +5),
   **streak bonus** +1/+2/+3 at 2/4/6 consecutive wins *or* losses.
 
+### Items (decided Oct 2026)
+
+Equipment that monsters and bosses drop. Items are plain bonuses: stats and simple
+combat effects. Items that change programs (extra cards, new blocks, signals) were
+considered and left out as unnecessary complexity.
+
+**Drops.** (Epics were first planned from the bosses' second cycle, round 19, but
+games end around round 16, so they key off boss order instead.) All from the lobby's
+seeded RNG, so a run replays exactly; bots get drops by
+the same rules and equip them through the same commands as the human.
+
+| Round | Drop |
+|---|---|
+| 1-3 (monster waves) | 2 commons each, always, win or lose |
+| First boss (Ogre Chieftain, round 7) | 1 rare on a win |
+| Every later boss (round 11 on) | 1 rare and 1 epic on a win |
+| Any boss, lost | 1 common (consolation) |
+
+In battle a dropping monster leaves a glinting pouch where it falls; the round result
+pop-up lists the loot.
+
+**Equipping.** Each unit has **2 item slots**. Items move freely between units every
+planning phase (no locking). Selling a unit returns its items to the player's stash;
+when three copies merge, their items go to the merged unit and any beyond its two slots
+return to the stash.
+
+**UI.** In the program pane, below the cards: the selected unit's two slots, and the
+stash of unequipped items. Drag an item onto a slot to equip it (or onto a unit on the
+board or bench); drag it off a slot to unequip it. Hover for what it does. The stash is
+visible whenever the program pane is open.
+
+**Pool** (numbers are a first pass; the balance harness will tune them):
+
+| Item | Rarity | Effect |
+|---|---|---|
+| Iron Sword | Common | +15% attack |
+| Leather Jerkin | Common | +20% max HP |
+| Lucky Coin | Common | +10% crit chance |
+| Healing Draught | Common | the first time below 40% HP, heals 30% of max HP |
+| Whetstone | Common | the first attack each battle deals double damage |
+| Scout's Map | Common | starts the battle one row further forward (if free) |
+| Spyglass | Rare | +1 range |
+| Vampire Fang | Rare | heals 20% of the damage it deals |
+| Spiked Buckler | Rare | reflects 20% of melee damage taken |
+| Hourglass | Rare | signature ability cooldown 1 tick shorter |
+| Phoenix Feather | Epic | revives once at 40% HP |
+| Banner | Epic | each Banner bears a class; the unit also counts as that class for synergies |
+| Twin Blades | Epic | attacks twice, each hit at 60% |
+| Aegis | Epic | can't be harmed for the first 2 ticks, then takes 15% less damage |
+
+**Sim notes.** Items live in `battler-sim` (`item.rs`): a `Player` has a stash and each
+`OwnedUnit` two slots; `Command::Equip` / `Unequip` change them; `UnitSpec` carries the
+equipped items into the battle, where they apply as integer percentages. Drops are an
+`Event` so replays and the result pop-up can show them.
+
 ### Battle readability
 
 The renderer turns each tick's events into short animations over the tick's duration.
@@ -537,10 +592,7 @@ In rough order. Each item is discussed before it is built.
    the matching half; **the palette shows only blocks the unit can use right now**
    (decided: locked blocks are hidden entirely, not greyed; level-up notices announce
    new ones).
-3. **Items:** equipment dropped by PvE and boss rounds, to collect before the game
-   proper starts (TFT-style). Not designed yet. Questions to settle: what items do (stats,
-   new blocks, modified abilities?), how they combine, and how they are equipped in the
-   one-screen planning layout.
+3. **Items:** designed (see Items, under Decided); being built.
 4. **Viewing other boards:** click a player in the standings to see their board (the
    state is all there; it needs a screen).
 5. **Done (Oct 2026): game length.** Round-scaled loss damage; ~15 rounds, ~20 minutes.
@@ -562,9 +614,8 @@ numbered list above stays as the record of what was done.
    - Death animations (fade or fall) instead of units vanishing.
    - Simple ability effects: Frost Nova ring, heal sparkles, taunt lines, signal pulses.
    - Tune movement feel; light screen shake on crits and boss hits.
-3. **Items** (needs a design conversation first): equipment dropped by monster and boss
-   rounds. To settle: what items change (stats, new blocks, modified abilities), whether
-   they combine TFT-style, and where they live in the decluttered layout.
+3. **Items:** designed Oct 2026 (see Items, under Decided): monster and boss drops, two
+   slots per unit, a stash in the program pane, stat and combat-effect items only.
 4. **Balance and opponents.**
    - Faster XP curve now games end around round 15 (levels 7-8 are rarely reached).
    - Bots that use the newer blocks (synergy blocks, the `it` target).

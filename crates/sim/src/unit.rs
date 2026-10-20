@@ -1,4 +1,4 @@
-use crate::{Ability, Character, Class, Level, Monster, Passive, Pos, Program, Stats};
+use crate::{Ability, Character, Class, ItemSlots, Level, Monster, Passive, Pos, Program, Stats};
 
 /// Stable identifier for a unit within one battle. Also defines turn order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -121,12 +121,33 @@ pub struct UnitSpec {
     pub program: Program,
     /// Extra HP and attack in percent, on top of level scaling (later bosses).
     pub boost_percent: u32,
+    /// Equipped items (see `item.rs`).
+    pub items: ItemSlots,
 }
 
 impl UnitSpec {
     pub fn new(kind: impl Into<UnitKind>, level: Level, program: Program) -> Self {
-        Self { kind: kind.into(), level, program, boost_percent: 0 }
+        Self {
+            kind: kind.into(),
+            level,
+            program,
+            boost_percent: 0,
+            items: [None; crate::ITEM_SLOTS],
+        }
     }
+
+    pub fn with_items(mut self, items: ItemSlots) -> Self {
+        self.items = items;
+        self
+    }
+}
+
+/// One-shot item effects already used up this battle.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ItemsSpent {
+    pub draught: bool,
+    pub whetstone: bool,
+    pub phoenix: bool,
 }
 
 /// Timed and battle-long effects on a unit. Each `*_until` field holds the last
@@ -168,6 +189,10 @@ pub struct Unit {
     pub statuses: Statuses,
     /// Chance of a critical hit, in percent.
     pub crit_chance: u32,
+    /// Equipped items.
+    pub items: ItemSlots,
+    /// One-shot item effects already used.
+    pub items_spent: ItemsSpent,
     /// Tick from which each ability may be used again, indexed by [`Ability::index`].
     pub(crate) ready_at: [u32; Ability::COUNT],
     /// Abilities used so far (for Arcane Surge).
@@ -199,6 +224,10 @@ impl Unit {
 
     pub fn has_passive(&self, passive: Passive) -> bool {
         self.kind.passive() == Some(passive)
+    }
+
+    pub fn has_item(&self, item: crate::Item) -> bool {
+        crate::item::has(&self.items, item)
     }
 
     /// True if hit during the previous tick or this one.

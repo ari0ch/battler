@@ -78,7 +78,12 @@ fn damage_note(r: &RoundReport) -> String {
 /// The last round's result as a small pop-up over the planning screen, so the
 /// next planning timer can already be running underneath it. Hover the gold
 /// line for the breakdown.
-pub fn spawn_result_popup(stage: &mut ChildSpawnerCommands, lobby: &Lobby, r: &RoundReport) {
+pub fn spawn_result_popup(
+    stage: &mut ChildSpawnerCommands,
+    lobby: &Lobby,
+    r: &RoundReport,
+    sprites: &Sprites,
+) {
     stage
         .spawn((
             Node {
@@ -129,6 +134,28 @@ pub fn spawn_result_popup(stage: &mut ChildSpawnerCommands, lobby: &Lobby, r: &R
                         );
                     });
                     card.spawn(text(damage_note(r), 13.0, color::MUTED));
+                    // Loot: the items the monsters dropped, now in the stash.
+                    if !r.loot.is_empty() {
+                        card.spawn(Node { align_items: AlignItems::Center, ..row(6.0) })
+                            .with_children(|l| {
+                                l.spawn(heading("Loot", 14.0, color::GOLD_LIGHT));
+                                for item in &r.loot {
+                                    l.spawn((
+                                        Node {
+                                            width: px(36),
+                                            height: px(36),
+                                            align_items: AlignItems::Center,
+                                            justify_content: JustifyContent::Center,
+                                            ..default()
+                                        },
+                                        kit::sliced(kit::rarity_frame(item.rarity()), 6.0),
+                                        Hovered::default(),
+                                        crate::editor::item_tooltip(*item, "Added to your items"),
+                                    ))
+                                    .with_child(crate::editor::item_icon(sprites, *item));
+                                }
+                            });
+                    }
                     if let Some(level) = r.level_ups.last() {
                         card.spawn(heading(format!("Level {level}!"), 15.0, color::GOLD_LIGHT));
                     }

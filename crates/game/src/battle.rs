@@ -93,6 +93,9 @@ pub struct Playback {
     pub healing: HashMap<UnitId, u32>,
     /// The totals changed since the meters were last drawn.
     pub meters_dirty: bool,
+    /// Where the last enemy fell: monster battles leave their loot there.
+    last_enemy_fall: Option<Vec2>,
+    loot_shown: bool,
     ended_for: f32,
     done: bool,
     pub skip: bool,
@@ -121,6 +124,8 @@ impl Playback {
             damage: HashMap::new(),
             healing: HashMap::new(),
             meters_dirty: true,
+            last_enemy_fall: None,
+            loot_shown: false,
             ended_for: 0.0,
             done: false,
             skip: false,
@@ -432,6 +437,16 @@ fn advance(
                 }
             }
             pb.trace_dirty = true;
+            // Monster rounds always drop something: a glint of gold where the
+            // last monster fell (the result pop-up lists what it was).
+            if pb.battle.outcome() != Outcome::Ongoing
+                && !pb.loot_shown
+                && matches!(pb.opponent, Some(Opponent::Monsters(_)))
+                && let (Some(p), Ok(board)) = (pb.last_enemy_fall, board.single())
+            {
+                pb.loot_shown = true;
+                show_loot(&mut commands, board, p);
+            }
         }
     } else {
         pb.ended_for += time.delta_secs();
@@ -552,6 +567,9 @@ fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: 
             pb.anims.entry(unit).or_default().dead_for = Some(0.0);
             if let Some(p) = feet(pb, unit) {
                 effects::spray(commands, board, p, 12, 60.0, DUST);
+                if pb.battle.unit(unit).is_some_and(|u| u.team == Team::Enemy) {
+                    pb.last_enemy_fall = Some(p);
+                }
             }
         }
         Event::Revived { unit, .. } => {
@@ -570,6 +588,15 @@ fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: 
         }
         Event::Moved { .. } => {}
     }
+}
+
+/// A burst of gold and sparkles where loot dropped.
+fn show_loot(commands: &mut Commands, board: Entity, at: Vec2) {
+    let up = at - Vec2::new(0.0, 14.0);
+    effects::burst(up, 26.0).color(HOLY).life(0.6).spawn(commands, board);
+    effects::ring(at, 6.0, 40.0).color(HOLY).life(0.7).flat().spawn(commands, board);
+    effects::spray(commands, board, up, 12, 70.0, HOLY);
+    spawn_floater(commands, board, up, "Loot!".into(), color::GOLD_LIGHT, 16.0);
 }
 
 /// An attack landing: a melee lunge or a projectile, a knock-back, a flash on

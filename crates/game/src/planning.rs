@@ -374,7 +374,7 @@ fn rebuild(
         shop(stage, run, &sprites, battle.is_some());
         notice(stage, &planning);
         if let (None, Some((report, _))) = (battle, &planning.result) {
-            spawn_result_popup(stage, lobby, report);
+            spawn_result_popup(stage, lobby, report, &sprites);
         }
     });
 }
@@ -1136,6 +1136,27 @@ fn board_unit(
             Pickable::IGNORE,
         ))
         .with_child(sprite_node(sprites.character(c), 2.0, false));
+        // Equipped items as small icons beside the figure.
+        if unit.items.iter().any(Option::is_some) {
+            u.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: px(-10),
+                    bottom: px(12),
+                    ..column(1.0)
+                },
+                Pickable::IGNORE,
+            ))
+            .with_children(|col| {
+                for item in unit.items.iter().flatten() {
+                    col.spawn((
+                        ImageNode::new(sprites.item(*item)),
+                        Node { width: px(16), height: px(16), ..default() },
+                        Pickable::IGNORE,
+                    ));
+                }
+            });
+        }
         u.spawn((
             Node {
                 position_type: PositionType::Absolute,

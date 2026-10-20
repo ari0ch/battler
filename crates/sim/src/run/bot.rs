@@ -13,7 +13,7 @@
 use super::economy::*;
 use super::{Command, Lobby, Location, OwnedUnit, Player, PlayerId, RunError};
 use crate::{
-    Ability, Action, Character, Class, Condition::*, Node, Program, Rng, Target, Threshold,
+    Ability, Action, Character, Class, Condition::*, Item, Node, Program, Rng, Target, Threshold,
 };
 
 /// The condition a preset program uses for a signature ability.
@@ -103,6 +103,51 @@ impl Bot {
         self.arrange(lobby, id);
         self.trim_bench(lobby, id);
         self.program(lobby, id);
+        self.equip(lobby, id);
+    }
+
+    /// Puts stashed items on board units with a free slot: defensive items on
+    /// the toughest melee unit, range on a ranged one, anything else on the
+    /// strongest unit. Simple on purpose; it goes through the same commands as
+    /// a human, so it can't do anything a human couldn't.
+    fn equip(&self, lobby: &mut Lobby, id: PlayerId) {
+        // Each successful equip shifts the stash, so look again every time.
+        for _ in 0..16 {
+            let player = lobby.player(id);
+            let Some(&item) = player.stash().first() else { return };
+            let free = |u: &OwnedUnit| u.items.iter().any(Option::is_none);
+            let mut board: Vec<(Location, &OwnedUnit)> = player
+                .board()
+                .iter()
+                .filter(|(_, u)| free(u))
+                .map(|(p, u)| (Location::Board(*p), u))
+                .collect();
+            if board.is_empty() {
+                return;
+            }
+            board.sort_by_key(|(_, u)| std::cmp::Reverse(power(u)));
+            let melee = |u: &OwnedUnit| !u.class().is_ranged();
+            let defensive = matches!(
+                item,
+                Item::LeatherJerkin
+                    | Item::HealingDraught
+                    | Item::SpikedBuckler
+                    | Item::PhoenixFeather
+                    | Item::Aegis
+            );
+            let pick = if defensive {
+                board.iter().find(|(_, u)| melee(u))
+            } else if item == Item::Spyglass {
+                board.iter().find(|(_, u)| !melee(u))
+            } else {
+                None
+            }
+            .or(board.first());
+            let Some(&(loc, _)) = pick else { return };
+            if lobby.apply(id, Command::Equip { item: 0, to: loc, slot: None }).is_err() {
+                return;
+            }
+        }
     }
 
     /// Gold to keep for interest. Bots spend everything when they're in danger.

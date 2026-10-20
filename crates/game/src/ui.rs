@@ -83,6 +83,11 @@ pub enum DragSource {
     /// A block already placed in a program card: drag it onto another card to
     /// move it, or anywhere else to take it out.
     Placed(usize, Slot),
+    /// An item in the stash, by index.
+    Stash(usize),
+    /// An item equipped on a unit, by slot: drag it to another unit or slot, or
+    /// anywhere else to put it back in the stash.
+    Equipped(Location, usize),
 }
 
 /// Somewhere a drag can be dropped.
@@ -96,6 +101,10 @@ pub enum DropTarget {
     Sell,
     /// A program card, by index (one past the end starts a new card).
     Card(usize),
+    /// One of the selected unit's item slots.
+    ItemSlot(usize),
+    /// The stash of unequipped items.
+    Stash,
 }
 
 /// Everything the player can do by clicking or dropping.
@@ -124,6 +133,10 @@ pub enum UiAction {
     ClearCard(usize),
     /// Take one block out of a card (it was dragged off).
     RemoveBlock(usize, Slot),
+    /// Equip a stash item on the selected unit (clicked).
+    EquipStash(usize),
+    /// Put an equipped item back in the stash.
+    Unequip(Location, usize),
     CardUp(usize),
     Speed(u32),
     /// Show or hide the players list.
@@ -248,17 +261,36 @@ fn on_drag_end(
     let Ok((mut t, source, dragging)) = q.get_mut(ev.entity) else { return };
     t.translation = Val2::ZERO;
     commands.entity(ev.entity).remove::<(GlobalZIndex, Dragging)>();
-    if let (true, DragSource::Placed(card, slot)) = (dragging, *source) {
-        // Drops are sent before the drag ends, so a move onto another card is
-        // queued already. Landing anywhere else (the board, the bench, the
-        // shop, the palette) takes the block out.
-        let moved = queue
-            .0
-            .iter()
-            .any(|a| matches!(a, UiAction::Drop(s, DropTarget::Card(_)) if *s == *source));
-        if !moved {
-            queue.0.push(UiAction::RemoveBlock(card, slot));
+    if !dragging {
+        return;
+    }
+    // Drops are sent before the drag ends, so a real move is queued already.
+    // A placed block landing anywhere but another card, or an equipped item
+    // landing anywhere but a unit or a slot, is taken off.
+    let landed = |ok: fn(&DropTarget) -> bool| {
+        queue.0.iter().any(|a| matches!(a, UiAction::Drop(s, t) if *s == *source && ok(t)))
+    };
+    match *source {
+        DragSource::Placed(card, slot) => {
+            if !landed(|t| matches!(t, DropTarget::Card(_))) {
+                queue.0.push(UiAction::RemoveBlock(card, slot));
+            }
         }
+        DragSource::Equipped(loc, slot) => {
+            let on_unit = |t: &DropTarget| {
+                matches!(
+                    t,
+                    DropTarget::ItemSlot(_)
+                        | DropTarget::Cell(_)
+                        | DropTarget::Field(_)
+                        | DropTarget::Bench(_)
+                )
+            };
+            if !landed(on_unit) {
+                queue.0.push(UiAction::Unequip(loc, slot));
+            }
+        }
+        _ => {}
     }
 }
 
@@ -273,12 +305,13 @@ fn on_drop(
     // reaches the cell twice: directly, and via the unit standing on it. Applying
     // both would swap twice and undo the move, so queue each drop only once.
     if let (Ok(target), Ok(source)) = (targets.get(ev.entity), sources.get(ev.dropped)) {
-        // A placed block is over its own card for the whole drag (it follows
-        // the pointer); landing there is not a move.
-        if let (DragSource::Placed(from, _), DropTarget::Card(to)) = (*source, *target)
-            && from == to
-        {
-            return;
+        // A placed block or item is over its own spot for the whole drag (it
+        // follows the pointer); landing there is not a move.
+        match (*source, *target) {
+            (DragSource::Placed(from, _), DropTarget::Card(to)) if from == to => return,
+            (DragSource::Equipped(_, from), DropTarget::ItemSlot(to)) if from == to => return,
+            (DragSource::Stash(_), DropTarget::Stash) => return,
+            _ => {}
         }
         let action = UiAction::Drop(*source, *target);
         if !queue.0.contains(&action) {

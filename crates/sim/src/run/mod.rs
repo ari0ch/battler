@@ -23,7 +23,7 @@ mod tests;
 use std::fmt;
 
 use crate::program::ProgramError;
-use crate::{Battle, Character, Class, Level, Pos, Program, Team, UnitSpec, Wave};
+use crate::{Battle, Character, Class, Item, ItemSlots, Level, Pos, Program, Team, UnitSpec, Wave};
 use economy::*;
 
 pub use lobby::{Applied, Command, Lobby, RoundKind, round_kind};
@@ -45,6 +45,8 @@ pub struct OwnedUnit {
     pub character: Character,
     pub level: Level,
     pub program: Program,
+    /// Equipped items (see `item.rs`).
+    pub items: ItemSlots,
 }
 
 impl OwnedUnit {
@@ -53,7 +55,7 @@ impl OwnedUnit {
     }
 
     pub fn spec(&self) -> UnitSpec {
-        UnitSpec::new(self.character, self.level, self.program.clone())
+        UnitSpec::new(self.character, self.level, self.program.clone()).with_items(self.items)
     }
 
     /// Gold returned when sold: the price of every copy inside.
@@ -118,6 +120,12 @@ pub enum RunError {
     Empty(Location),
     MaxLevel,
     InvalidProgram(ProgramError),
+    /// No item at this stash index.
+    NoItem(usize),
+    /// Both of the unit's item slots are taken.
+    ItemSlotsFull,
+    /// Nothing equipped in that slot.
+    EmptyItemSlot,
 }
 
 impl fmt::Display for RunError {
@@ -136,6 +144,9 @@ impl fmt::Display for RunError {
             RunError::Empty(_) => write!(f, "there's no unit there"),
             RunError::MaxLevel => write!(f, "already at the maximum level"),
             RunError::InvalidProgram(e) => write!(f, "{e}"),
+            RunError::NoItem(_) => write!(f, "that item isn't in your stash"),
+            RunError::ItemSlotsFull => write!(f, "both item slots are taken"),
+            RunError::EmptyItemSlot => write!(f, "nothing equipped there"),
         }
     }
 }
@@ -175,6 +186,7 @@ impl BattleSetup {
                 }
             }
         }
+        battle.scout_ahead();
         battle
     }
 }
@@ -201,4 +213,6 @@ pub struct RoundReport {
     pub level_ups: Vec<u32>,
     /// Set if this round ended the player's game (1 = won the lobby).
     pub placement: Option<u32>,
+    /// Items dropped by the monsters, added to the stash.
+    pub loot: Vec<Item>,
 }
