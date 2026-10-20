@@ -60,7 +60,7 @@ opt-level = 3
 
 # Web release builds: small and fast to load.
 [profile.release]
-opt-level = "s"
-lto = "thin"
+opt-level = "z"
+lto = "fat"
 codegen-units = 1
 strip = "debuginfo"
