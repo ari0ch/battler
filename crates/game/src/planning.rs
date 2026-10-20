@@ -1213,6 +1213,9 @@ fn program_overlay(
             ..row(0.0)
         },
         GlobalZIndex(40),
+        // A full-height strip down the right edge: let the pointer through
+        // where it's empty, or it swallows clicks on the buttons beneath.
+        Pickable::IGNORE,
     ))
     .with_children(|o| {
         o.spawn(ui::button(
