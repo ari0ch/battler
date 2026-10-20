@@ -9,7 +9,8 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 ## Layout
 
 - `crates/sim`: `battler-sim`, the deterministic battle simulation and interpreter.
-  **No dependencies.** Keep it that way unless there's a strong reason, and discuss first.
+  **No dependencies** (except `serde`, optional and off by default, for multiplayer).
+  Keep it that way unless there's a strong reason, and discuss first.
 - `crates/game`: `battler`, the Bevy 0.20 client. Rendering, input, editor, replay.
   It reads sim state; game rules never live here.
 - `crates/sim/src/run/`: the run. `Lobby` (eight players, shared `Pool`, matchmaking,
@@ -19,11 +20,19 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   bots alike; bots never get a shortcut. Monsters for PvE rounds live in `monster.rs`.
   Tuning numbers live in `run/economy.rs`; class/character stats in `class.rs`; synergy
   rules in `synergy.rs`; monster and boss stats in `monster.rs`.
+- `crates/proto`: `battler-proto`, the client/server messages (postcard, numbered
+  `Frame`s). Turns on the sim's optional `serde` feature (the sim's only dependency, and
+  only with that feature).
+- `crates/sim/src/run/step.rs`: the `Step` log (command, round start, resolve, bot takes
+  a seat) that multiplayer is built on; `run/timing.rs`: tick and planning times shared
+  by the game and the server.
 - `crates/server`: `battler-server`, the multiplayer server (axum + tokio, WebSocket at
   `/ws`, `/health` for Render's checks and wake-ups). It reuses the sim so rules are never
-  written twice. Deployed to Render's free plan from `render.yaml` (Docker,
-  `crates/server/Dockerfile`, Frankfurt) when server or sim files change on `main` and CI
-  passes. Free services sleep after 15 idle minutes and take about a minute to wake.
+  written twice. `room.rs` is the room as a plain state machine (tested without sockets
+  or real time); `main.rs` runs one task per room. Deployed to Render's free plan from
+  `render.yaml` (Docker, `crates/server/Dockerfile`, Frankfurt) when server, proto or
+  sim files change on `main` and CI passes. Free services sleep after 15 idle minutes
+  and take about a minute to wake.
 - `.github/workflows/ci.yml`: fmt, clippy (`-D warnings`) and tests on every push. The
   server job uploads the `Cargo.lock` it resolved, for when new dependencies can't be
   resolved locally.
@@ -58,8 +67,8 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 
 ## Game crate architecture
 
-- `state.rs`: `AppState` (MainMenu, InRun, GameOver, Replay) with the `RunPhase` sub-state
-  (Planning, Battle), plus shared resources. Screens spawn with `DespawnOnExit(..)` so
+- `state.rs`: `AppState` (MainMenu, Room, InRun, GameOver, Replay) with the `RunPhase`
+  sub-state (Planning, Battle), plus shared resources. Screens spawn with `DespawnOnExit(..)` so
   they clean up on state change. **The round screen (`planning.rs`) lives for all of
   `InRun`** and rebuilds in both phases: in Battle its field is
   `battle::spawn_battle_field`; the round result is a pop-up (`result::spawn_result_popup`)
@@ -70,8 +79,14 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
   global `Activate` observer queues actions. Drag and drop: `DragSource` / `DropTarget`
   plus picking observers. **Import `bevy::ui_widgets::Button` explicitly**: the prelude's
   `Button` and `Interaction` are deprecated in 0.20 and fail clippy.
-- `actions.rs`: the only place UI input changes the lobby. The human is player 0
-  (`state::ME`); `state::LobbyExt` adds `me()` and `act(Command)` to `Lobby`.
+- `actions.rs`: the only place UI input changes the lobby. `state::GameRun` holds the
+  lobby, this player's id (`my_id`; 0 solo, the server's seat online) and the online
+  state; it derefs to `Lobby` for reading, and `run.me()` / `run.act(Command)` are the
+  only way to change it (online, `act` also sends the command).
+- `net.rs`: online play. An exclusive system pumps an `ewebsock` connection (a non-send
+  resource), applies the server's steps to the confirmed lobby and rebuilds the shown
+  lobby as confirmed + pending commands. `lobby_room.rs`: the waiting room screen;
+  `menu.rs`: name and room-code text boxes (Bevy's `TextInput`).
 - `planning.rs`: the one-screen planning layout. `editor.rs`: the program column (cards +
   palette) and editing logic. `cards.rs`: all block/character/synergy wording and tooltips.
 - Tooltips: add `Hovered::default()` plus a `ui::Tooltip` to any entity; one shared
@@ -110,10 +125,15 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 
 Pinned to 0.20 with default features off and the needed features listed one by one in
 the root `Cargo.toml`, to keep the WASM build small. Check the docs for the pinned
-version, not older examples, because APIs change between releases. Upgrades are deliberate and follow the official migration guide.
+version, not older examples, because APIs change between releases. Upgrades are
+deliberate and follow the official migration guide.
 
 ## Working from Claude's cloud workspace
 
 crates.io is not reachable from that workspace, so the Bevy crate can't be built there.
 The sim crate can be tested by copying it outside the workspace (it has no
-dependencies). Otherwise, push to a branch and use the CI results.
+dependencies). The server and protocol can be built offline from vendored sources
+(have CI run `cargo vendor` for just sim + proto + server into a branch, clone it, and
+point `.cargo/config.toml` at it). Otherwise, push to a branch and use the CI results.
+To run a local server for the game: `cargo run -p battler-server`, then open the game
+with `?server=ws://localhost:10000/ws` (or set `BATTLER_SERVER` natively).
