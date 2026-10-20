@@ -4,9 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Battler</title>
-    <!-- Trunk builds the crate in this directory to wasm and runs wasm-opt on release builds. -->
-    <link data-trunk rel="rust" data-wasm-opt="z" />
+    <!-- Trunk builds the crate in this directory to wasm and runs wasm-opt on release
+         builds. The initializer drives the loading screen below. -->
+    <link data-trunk rel="rust" data-wasm-opt="z" data-initializer="loader.js" />
+    <link data-trunk rel="copy-file" href="assets/fonts/PixelifySans.ttf" />
     <style>
+      @font-face {
+        font-family: "Pixelify Sans";
+        src: url("PixelifySans.ttf") format("truetype");
+        font-display: swap;
+      }
       html, body {
         margin: 0;
         height: 100%;
@@ -19,9 +26,58 @@
         height: 100%;
         outline: none;
       }
+      /* Plain HTML, so it shows the moment the page arrives, long before the
+         game itself has downloaded. */
+      #loader {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #1d1a2b;
+        color: #f3e6c4;
+        font-family: "Pixelify Sans", monospace;
+        transition: opacity 0.5s;
+      }
+      #loader.done {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #loader h1 {
+        margin: 0;
+        font-size: 56px;
+        letter-spacing: 4px;
+        color: #f4b41b;
+        text-shadow: 0 4px 0 #6e1f33;
+      }
+      #loader-track {
+        width: min(360px, 70vw);
+        height: 18px;
+        padding: 3px;
+        background: #3a2316;
+        border: 3px solid #1a1c2c;
+        box-shadow: inset 0 0 0 2px #8f5a35;
+      }
+      #loader-bar {
+        width: 0%;
+        height: 100%;
+        background: linear-gradient(#ffd25a, #e8a33c);
+        transition: width 0.2s;
+      }
+      #loader-label {
+        font-size: 16px;
+        color: #cdb78f;
+      }
     </style>
   </head>
   <body>
     <canvas id="battler-canvas"></canvas>
+    <div id="loader">
+      <h1>BATTLER</h1>
+      <div id="loader-track"><div id="loader-bar"></div></div>
+      <div id="loader-label">Loading...</div>
+    </div>
   </body>
 </html>
