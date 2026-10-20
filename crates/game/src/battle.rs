@@ -25,7 +25,8 @@ pub struct BattlePlugin;
 
 impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
-        let watching = in_state(RunPhase::Battle).or_else(in_state(AppState::Replay));
+        // A function, so each system set gets its own copy of the condition.
+        let watching = || in_state(RunPhase::Battle).or_else(in_state(AppState::Replay));
         app.add_systems(OnEnter(RunPhase::Battle), |mut rev: ResMut<Rev>| rev.bump())
             .add_systems(OnEnter(AppState::Replay), |mut rev: ResMut<Rev>| rev.bump())
             // In a run the planning screen hosts the battle (`spawn_battle_field`);
@@ -40,10 +41,16 @@ impl Plugin for BattlePlugin {
                     animate_projectiles,
                     animate_effects,
                     animate_floaters,
-                    refresh_trace,
                 )
                     .chain()
-                    .run_if(watching),
+                    .run_if(watching()),
+            )
+            // After Update, so a screen rebuilt this frame (whose despawns are
+            // applied by then) can't be written to after it's gone; before
+            // layout, so the new rows show this frame. See `meters.rs`.
+            .add_systems(
+                PostUpdate,
+                refresh_trace.run_if(watching()).before(bevy::ui::UiSystems::Layout),
             );
     }
 }

@@ -111,8 +111,8 @@ fn pulse_rings(time: Res<Time<Real>>, mut rings: Query<&mut Outline, With<Upgrad
 #[derive(Component)]
 struct CellMark(Pos);
 
-/// D rerolls, F buys XP, E sells the unit under the pointer, Tab opens or
-/// docks the program panel.
+/// D rerolls, F buys XP, L locks or unlocks the shop, E sells the unit under
+/// the pointer, Tab opens or docks the program panel.
 fn hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     mut queue: ResMut<ActionQueue>,
@@ -123,6 +123,9 @@ fn hotkeys(
     }
     if keys.just_pressed(KeyCode::KeyF) {
         queue.0.push(UiAction::BuyXp);
+    }
+    if keys.just_pressed(KeyCode::KeyL) {
+        queue.0.push(UiAction::ToggleShopLock);
     }
     if keys.just_pressed(KeyCode::Tab) {
         queue.0.push(UiAction::ToggleEditor);
@@ -902,23 +905,46 @@ fn shop(
                     });
                 }
             });
-            footer.spawn(Node { width: px(150), ..column(6.0) }).with_children(|col| {
+            footer.spawn(Node { width: px(184), ..column(6.0) }).with_children(|col| {
                 if in_battle {
                     // No buying during battle: the shop waits for the next round.
                     col.spawn(Node { justify_content: JustifyContent::Center, ..row(0.0) })
                         .with_child(ui::outlined("Battle!", 22.0, color::GOLD_LIGHT));
                     return;
                 }
-                col.spawn(ui::button(
-                    UiAction::Reroll,
-                    SECONDARY,
-                    Node { width: percent(100), height: px(40), ..row(6.0) },
-                ))
-                .with_children(|b| {
-                    b.spawn(heading("Reroll", 15.0, color::TEXT));
-                    b.spawn(kit::icon(kit::img::ICON_COIN, 18.0));
-                    b.spawn(heading(REROLL_COST.to_string(), 15.0, color::TEXT));
-                    b.spawn(text("D", 12.0, color::MUTED));
+                col.spawn(Node { width: percent(100), ..row(6.0) }).with_children(|r| {
+                    r.spawn(ui::button(
+                        UiAction::Reroll,
+                        SECONDARY,
+                        Node { flex_grow: 1.0, height: px(40), ..row(6.0) },
+                    ))
+                    .with_children(|b| {
+                        b.spawn(heading("Reroll", 15.0, color::TEXT));
+                        b.spawn(kit::icon(kit::img::ICON_COIN, 18.0));
+                        b.spawn(heading(REROLL_COST.to_string(), 15.0, color::TEXT));
+                        b.spawn(text("D", 12.0, color::MUTED));
+                    });
+                    // Lock: pressed in while on.
+                    let locked = run.shop_locked();
+                    let (title, help) = if locked {
+                        ("Shop locked", "These offers stay for next round. Click (or L) to unlock.")
+                    } else {
+                        ("Lock shop", "Keep these offers for next round instead of new ones (L).")
+                    };
+                    r.spawn(ui::button(
+                        UiAction::ToggleShopLock,
+                        if locked { ui::TOGGLED } else { SECONDARY },
+                        Node { width: px(40), height: px(40), ..default() },
+                    ))
+                    .insert((
+                        Hovered::default(),
+                        ui::Tooltip {
+                            title: title.to_string(),
+                            accent: color::GOLD_LIGHT,
+                            lines: vec![(help.to_string(), color::TEXT)],
+                        },
+                    ))
+                    .with_child(kit::icon(kit::img::ICON_LOCK, 22.0));
                 });
                 // Online, Ready is a vote: the round starts once everyone is ready.
                 let (label, skin) =

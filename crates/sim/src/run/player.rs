@@ -36,6 +36,8 @@ pub struct Player {
     history: Vec<(BattleSetup, RoundReport)>,
     /// Items owned but not equipped.
     stash: Vec<Item>,
+    /// Keep this shop's offers when the next round starts.
+    shop_locked: bool,
 }
 
 impl Player {
@@ -58,6 +60,7 @@ impl Player {
             next_id: 0,
             history: Vec::new(),
             stash: Vec::new(),
+            shop_locked: false,
         };
         player.refresh_shop(pool);
         player
@@ -296,6 +299,24 @@ impl Player {
 
     /// Returns unbought offers to the pool and draws a fresh shop: each slot
     /// rolls a rarity with this level's odds, then a copy of that rarity.
+    /// Whether the shop keeps its offers into the next round.
+    pub fn shop_locked(&self) -> bool {
+        self.shop_locked
+    }
+
+    pub(super) fn set_shop_lock(&mut self, locked: bool) {
+        self.shop_locked = locked;
+    }
+
+    /// The shop at the start of a round: fresh offers, unless it's locked, in
+    /// which case it keeps exactly what's there (bought slots stay empty). The
+    /// lock stays on until the player turns it off.
+    pub(super) fn new_round_shop(&mut self, pool: &mut Pool) {
+        if !self.shop_locked {
+            self.refresh_shop(pool);
+        }
+    }
+
     pub(super) fn refresh_shop(&mut self, pool: &mut Pool) {
         self.return_shop(pool);
         let odds = shop_odds(self.level);

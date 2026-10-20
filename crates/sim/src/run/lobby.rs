@@ -71,6 +71,9 @@ pub enum Command {
         from: Location,
         slot: usize,
     },
+    /// Lock (or unlock) the shop: a locked shop keeps its offers into the
+    /// next round instead of being refreshed.
+    LockShop(bool),
 }
 
 /// What a successful [`Command`] did.
@@ -87,6 +90,8 @@ pub enum Applied {
     ProgramSet,
     Equipped,
     Unequipped,
+    /// The shop's lock is now on (true) or off.
+    ShopLocked(bool),
 }
 
 /// Who sits in one seat of a lobby: a named human, or a bot.
@@ -325,6 +330,10 @@ impl Lobby {
                 player.unequip(from, slot)?;
                 Applied::Unequipped
             }
+            Command::LockShop(locked) => {
+                player.set_shop_lock(locked);
+                Applied::ShopLocked(locked)
+            }
         })
     }
 
@@ -466,7 +475,7 @@ impl Lobby {
 
         self.round += 1;
         for player in self.players.iter_mut().filter(|p| p.is_alive()) {
-            player.refresh_shop(&mut self.pool);
+            player.new_round_shop(&mut self.pool);
         }
         self.begin_planning();
     }

@@ -20,9 +20,17 @@ pub struct MetersPlugin;
 
 impl Plugin for MetersPlugin {
     fn build(&self, app: &mut App) {
+        // `PostUpdate`, not `Update`: toggling the panel bumps `Rev`, and the
+        // round screen's rebuild then despawns the old panel. Commands are
+        // deferred, so a refresh in `Update` could queue rows for a panel that
+        // is despawned before they apply, and a command on a missing entity
+        // panics. By `PostUpdate` the rebuild has been applied, so the query
+        // only finds panels that still exist.
         app.add_systems(
-            Update,
-            refresh_meters.run_if(in_state(RunPhase::Battle).and_then(resource_exists::<Playback>)),
+            PostUpdate,
+            refresh_meters
+                .run_if(in_state(RunPhase::Battle).and_then(resource_exists::<Playback>))
+                .before(bevy::ui::UiSystems::Layout),
         );
     }
 }
