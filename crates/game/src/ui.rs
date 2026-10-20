@@ -80,6 +80,9 @@ pub enum Slot {
 pub enum DragSource {
     Unit(Location),
     Block(Block),
+    /// A block already placed in a program card: drag it onto another card to
+    /// move it, or anywhere else to take it out.
+    Placed(usize, Slot),
 }
 
 /// Somewhere a drag can be dropped.
@@ -119,8 +122,15 @@ pub enum UiAction {
     /// Clicking a filled slot cycles its setting (threshold, target...).
     CycleSlot(usize, Slot),
     ClearCard(usize),
+    /// Take one block out of a card (it was dragged off).
+    RemoveBlock(usize, Slot),
     CardUp(usize),
     Speed(u32),
+    /// Show or hide the players list.
+    TogglePlayers,
+    /// Show or hide the damage and healing meters.
+    ToggleMeters,
+    MeterTab(crate::state::MeterTab),
     Skip,
     ToggleTrace,
     /// Close the round result pop-up.
@@ -174,7 +184,22 @@ impl Plugin for UiPlugin {
     }
 }
 
-fn on_activate(ev: On<Activate>, clickables: Query<&Clickable>, mut queue: ResMut<ActionQueue>) {
+/// A draggable that has moved far enough to count as a drag rather than a
+/// shaky click. Bevy sends the click *before* the drop when a drag ends over
+/// the dragged element (which follows the pointer), so without this every drag
+/// would also click what was dragged.
+#[derive(Component)]
+pub struct Dragging;
+
+/// How far (in window pixels) the pointer must move before a press on a
+/// draggable becomes a drag.
+const DRAG_THRESHOLD: f32 = 8.0;
+
+fn on_activate(
+    ev: On<Activate>,
+    clickables: Query<&Clickable, Without<Dragging>>,
+    mut queue: ResMut<ActionQueue>,
+) {
     if let Ok(c) = clickables.get(ev.entity) {
         queue.0.push(c.0);
     }
@@ -199,23 +224,36 @@ fn on_drag_start(
 fn on_drag(
     ev: On<bevy::picking::events::PointerDrag>,
     scale: Res<UiScale>,
-    mut q: Query<&mut UiTransform, With<DragSource>>,
+    mut q: Query<(&mut UiTransform, Has<Dragging>), With<DragSource>>,
+    mut commands: Commands,
 ) {
-    if let Ok(mut t) = q.get_mut(ev.entity) {
+    if let Ok((mut t, dragging)) = q.get_mut(ev.entity) {
         // Pointer distance is in window pixels; `Val::Px` is multiplied by `UiScale`.
         let s = scale.0.max(0.01);
         t.translation = Val2::px(ev.distance.x / s, ev.distance.y / s);
+        if !dragging && ev.distance.length() > DRAG_THRESHOLD {
+            commands.entity(ev.entity).insert(Dragging);
+        }
     }
 }
 
+/// Ends a drag. A placed program block that was dragged off and not dropped
+/// onto another card is removed from its card.
 fn on_drag_end(
     ev: On<bevy::picking::events::PointerDragEnd>,
-    mut q: Query<&mut UiTransform, With<DragSource>>,
+    mut q: Query<(&mut UiTransform, &DragSource, Has<Dragging>)>,
+    mut queue: ResMut<ActionQueue>,
     mut commands: Commands,
 ) {
-    if let Ok(mut t) = q.get_mut(ev.entity) {
-        t.translation = Val2::ZERO;
-        commands.entity(ev.entity).remove::<GlobalZIndex>();
+    let Ok((mut t, source, dragging)) = q.get_mut(ev.entity) else { return };
+    t.translation = Val2::ZERO;
+    commands.entity(ev.entity).remove::<(GlobalZIndex, Dragging)>();
+    if let (true, DragSource::Placed(card, slot)) = (dragging, *source) {
+        // Drops are sent before the drag ends, so any move is queued already.
+        let moved = queue.0.iter().any(|a| matches!(a, UiAction::Drop(s, _) if *s == *source));
+        if !moved {
+            queue.0.push(UiAction::RemoveBlock(card, slot));
+        }
     }
 }
 
@@ -230,6 +268,13 @@ fn on_drop(
     // reaches the cell twice: directly, and via the unit standing on it. Applying
     // both would swap twice and undo the move, so queue each drop only once.
     if let (Ok(target), Ok(source)) = (targets.get(ev.entity), sources.get(ev.dropped)) {
+        // A placed block is over its own card for the whole drag (it follows
+        // the pointer); landing there is not a move.
+        if let (DragSource::Placed(from, _), DropTarget::Card(to)) = (*source, *target)
+            && from == to
+        {
+            return;
+        }
         let action = UiAction::Drop(*source, *target);
         if !queue.0.contains(&action) {
             queue.0.push(action);

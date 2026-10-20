@@ -125,6 +125,56 @@ pub fn cycle_slot(lobby: &mut Lobby, planning: &mut Planning, card: usize, slot:
     try_draft(lobby, planning, draft);
 }
 
+/// Takes the block out of one half of a card. A card left with neither half
+/// is removed.
+pub fn remove_block(lobby: &mut Lobby, planning: &mut Planning, card: usize, slot: Slot) {
+    let mut draft = planning.draft.clone();
+    if take(&mut draft, card, slot).is_some() {
+        try_draft(lobby, planning, draft);
+    }
+}
+
+/// Moves a placed block onto another card (one past the end starts a new
+/// card), where it replaces the matching half like a palette drop.
+pub fn move_block(lobby: &mut Lobby, planning: &mut Planning, from: usize, slot: Slot, to: usize) {
+    let Some((_, unit)) = selected_unit(lobby.me(), planning) else { return };
+    let max = lobby.me().synergies().card_slots(unit.character, unit.level);
+    let mut draft = planning.draft.clone();
+    let Some(block) = draft.get(from).and_then(|c| match slot {
+        Slot::Cond => c.cond.map(Block::Cond),
+        Slot::Act => c.act.map(Block::Act),
+    }) else {
+        return;
+    };
+    if to >= draft.len() {
+        if draft.len() >= max {
+            planning.toast("No free card: merge copies to level this unit up");
+            return;
+        }
+        draft.push(DraftCard::default());
+    }
+    let to = to.min(draft.len() - 1);
+    // Put first, then take: taking may remove the source card and shift the
+    // indices after it, but the destination has already been filled.
+    put(&mut draft[to], block);
+    take(&mut draft, from, slot);
+    try_draft(lobby, planning, draft);
+}
+
+/// Empties one half of a card in a draft and returns what was there; drops the
+/// card if both halves are now empty.
+fn take(draft: &mut Vec<DraftCard>, card: usize, slot: Slot) -> Option<Block> {
+    let c = draft.get_mut(card)?;
+    let block = match slot {
+        Slot::Cond => c.cond.take().map(Block::Cond),
+        Slot::Act => c.act.take().map(Block::Act),
+    };
+    if c.cond.is_none() && c.act.is_none() {
+        draft.remove(card);
+    }
+    block
+}
+
 pub fn clear_card(lobby: &mut Lobby, planning: &mut Planning, card: usize) {
     let mut draft = planning.draft.clone();
     if card < draft.len() {
@@ -178,7 +228,7 @@ pub fn spawn_program_panel(
             palette(p, unit.character, &unlocks);
             p.spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, Pickable::IGNORE))
                 .with_child(text(
-                    "Drag or click blocks into cards - click a placed block to change it",
+                    "Drag blocks into cards - click one to change it, drag it off to remove it",
                     11.0,
                     color::INK_FAINT,
                 ));
@@ -337,7 +387,13 @@ fn slot_box(
     e.insert((DropTarget::Card(card), kit::sliced(tag_image(block), 4.0)))
         .remove::<ui::HoverSkin>();
     if let Some(b) = block {
-        e.insert(cards::block_tooltip(b, unlocks, character));
+        // A placed block can be dragged to another card, or off to remove it.
+        // It lets the pointer through so the card underneath gets the drop.
+        e.insert((
+            cards::block_tooltip(b, unlocks, character),
+            DragSource::Placed(card, slot),
+            Pickable { should_block_lower: false, is_hoverable: true },
+        ));
     }
     // An action with a target shows it as a pill, so it reads as a setting you
     // can change: clicking the slot cycles it.
@@ -466,4 +522,36 @@ fn palette(parent: &mut ChildSpawnerCommands, character: Character, unlocks: &Un
         chip_group(p, "Conditions", Color::srgb(0.173, 0.373, 0.478), conds, unlocks, character);
         chip_group(p, "Actions", Color::srgb(0.541, 0.290, 0.063), acts, unlocks, character);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn card(cond: Option<Condition>, act: Option<Action>) -> DraftCard {
+        DraftCard { cond, act }
+    }
+
+    #[test]
+    fn taking_one_half_keeps_the_card() {
+        let mut draft = vec![card(Some(Condition::EnemyAdjacent), Some(Action::Guard))];
+        assert_eq!(take(&mut draft, 0, Slot::Cond), Some(Block::Cond(Condition::EnemyAdjacent)));
+        assert_eq!(draft, vec![card(None, Some(Action::Guard))]);
+    }
+
+    #[test]
+    fn taking_the_last_half_removes_the_card() {
+        let mut draft =
+            vec![card(None, Some(Action::Guard)), card(Some(Condition::EnemyInRange), None)];
+        assert_eq!(take(&mut draft, 0, Slot::Act), Some(Block::Act(Action::Guard)));
+        assert_eq!(draft, vec![card(Some(Condition::EnemyInRange), None)]);
+    }
+
+    #[test]
+    fn taking_from_an_empty_half_or_missing_card_does_nothing() {
+        let mut draft = vec![card(None, Some(Action::Guard))];
+        assert_eq!(take(&mut draft, 0, Slot::Cond), None);
+        assert_eq!(take(&mut draft, 5, Slot::Act), None);
+        assert_eq!(draft.len(), 1);
+    }
 }

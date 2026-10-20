@@ -11,6 +11,7 @@ mod effects;
 mod field;
 mod kit;
 mod menu;
+mod meters;
 mod motion;
 mod planning;
 mod result;
@@ -54,6 +55,7 @@ fn main() {
             planning::PlanningPlugin,
             editor::EditorPlugin,
             battle::BattlePlugin,
+            meters::MetersPlugin,
             result::ResultPlugin,
         ))
         // Picking runs in PreUpdate, so clicks and drops are queued before this.

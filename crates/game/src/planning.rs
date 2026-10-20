@@ -24,6 +24,7 @@ use crate::cards;
 use crate::editor::{self, HoveredAbility};
 use crate::field::{self, FIELD_H, FIELD_W, FieldHover};
 use crate::kit;
+use crate::meters;
 use crate::result::{ResultCountdown, ordinal, spawn_result_popup};
 use crate::sprites::{SPRITE_PX, Sprites, battle_scale, sprite_node};
 use crate::state::{AppState, GameRun, LobbyExt, ME, Planning, Rev, RunPhase, Settings};
@@ -304,14 +305,55 @@ fn rebuild(
                     }
                     up_arrow(mid, lobby, battle);
                 });
-                // Right: the players.
+                // Right: the players list and the battle meters, each shown or
+                // hidden with a square button at the edge.
                 body.spawn(Node {
                     position_type: PositionType::Absolute,
-                    right: px(16),
+                    right: px(10),
                     top: px(12),
-                    ..default()
+                    bottom: px(12),
+                    align_items: AlignItems::FlexStart,
+                    ..row(8.0)
                 })
-                .with_children(|right| standings(right, lobby));
+                .with_children(|right| {
+                    right
+                        .spawn(Node {
+                            max_height: percent(100),
+                            align_items: AlignItems::FlexEnd,
+                            ..column(8.0)
+                        })
+                        .with_children(|panels| {
+                            if settings.show_players {
+                                standings(panels, lobby);
+                            }
+                            if settings.show_meters {
+                                meters::spawn_meters(
+                                    panels,
+                                    playback.as_deref(),
+                                    &settings,
+                                    &sprites,
+                                );
+                            }
+                        });
+                    right.spawn(column(6.0)).with_children(|buttons| {
+                        square_button(
+                            buttons,
+                            UiAction::TogglePlayers,
+                            settings.show_players,
+                            kit::img::ICON_CROWN,
+                            "Players",
+                            "Every player's health. Click to show or hide.",
+                        );
+                        square_button(
+                            buttons,
+                            UiAction::ToggleMeters,
+                            settings.show_meters,
+                            kit::img::ICON_SWORD,
+                            "Damage and healing",
+                            "How much each of your units has dealt or healed, live in battle.",
+                        );
+                    });
+                });
                 // Overlays on the right: the program panel while planning, or
                 // the card trace during battle if it is turned on.
                 if battle.is_none() {
@@ -378,8 +420,21 @@ fn header(
             // Level and XP.
             h.spawn(row(8.0)).with_children(|lv| {
                 lv.spawn(kit::icon(kit::img::ICON_CROWN, 30.0));
-                lv.spawn(Node { width: px(120), ..column(3.0) }).with_children(|c| {
-                    c.spawn(heading(format!("Level {}", run.level()), 14.0, color::TEXT));
+                lv.spawn(Node { width: px(132), ..column(3.0) }).with_children(|c| {
+                    // "Level 3" with the XP towards the next level ("8/16") at the right.
+                    c.spawn(Node {
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Baseline,
+                        ..row(6.0)
+                    })
+                    .with_children(|r| {
+                        r.spawn(heading(format!("Level {}", run.level()), 14.0, color::TEXT));
+                        let xp = match run.xp_needed() {
+                            Some(n) => format!("{}/{n}", run.xp()),
+                            None => "max".to_string(),
+                        };
+                        r.spawn(heading(xp, 12.0, color::MUTED));
+                    });
                     let fill =
                         run.xp_needed().map_or(100.0, |n| 100.0 * run.xp() as f32 / n as f32);
                     kit::spawn_bar(c, kit::img::FILL_XP, fill, percent(100), 14.0, ());
@@ -628,6 +683,26 @@ fn unit_tile(
                 spawn_card_dots(foot, unit.program.len(), max);
             });
         });
+}
+
+/// A square toggle button with an icon; lit while its panel is open.
+fn square_button(
+    parent: &mut ChildSpawnerCommands,
+    action: UiAction,
+    on: bool,
+    icon: Handle<Image>,
+    title: &str,
+    help: &str,
+) {
+    let style = if on { ui::TOGGLED } else { SECONDARY };
+    parent
+        .spawn(ui::button(action, style, Node { width: px(40), height: px(40), ..default() }))
+        .insert(ui::Tooltip {
+            title: title.to_string(),
+            accent: color::GOLD_LIGHT,
+            lines: vec![(help.to_string(), color::TEXT)],
+        })
+        .with_child(kit::icon(icon, 24.0));
 }
 
 /// The lobby standings: a narrow sidebar, every player's health, best first.

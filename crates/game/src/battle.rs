@@ -1,7 +1,7 @@
 //! Battle playback. The sim steps one tick at a time; this module turns each
-//! tick's events into animation: units glide between cells, a badge shows the
-//! card that fired, and floating numbers show damage and healing. The same
-//! view plays replays from the run summary.
+//! tick's events into animation: units glide between cells, attacks lunge or
+//! fly, spells show their effects (`effects.rs`), and floating numbers show
+//! damage and healing. The same view plays replays from the run summary.
 
 use std::collections::HashMap;
 
@@ -81,8 +81,6 @@ pub struct Playback {
     screen: HashMap<UnitId, Vec2>,
     /// Which card each unit ran on the latest tick.
     fired: HashMap<UnitId, CardRef>,
-    /// Badge text per unit and how long it stays up.
-    badges: HashMap<UnitId, (String, f32)>,
     /// The signature ability each unit's fired card uses this tick, so its
     /// hits can look like that spell (a Fireball explodes, a Backstab bleeds).
     casting: HashMap<UnitId, Ability>,
@@ -90,6 +88,11 @@ pub struct Playback {
     anims: HashMap<UnitId, UnitAnim>,
     /// Playback seconds since the battle began; drives idle breathing.
     clock: f32,
+    /// Damage dealt and healing done by each unit so far (the meters).
+    pub damage: HashMap<UnitId, u32>,
+    pub healing: HashMap<UnitId, u32>,
+    /// The totals changed since the meters were last drawn.
+    pub meters_dirty: bool,
     ended_for: f32,
     done: bool,
     pub skip: bool,
@@ -112,10 +115,12 @@ impl Playback {
             bodies,
             screen,
             fired: HashMap::new(),
-            badges: HashMap::new(),
             casting: HashMap::new(),
             anims: HashMap::new(),
             clock: 0.0,
+            damage: HashMap::new(),
+            healing: HashMap::new(),
+            meters_dirty: true,
             ended_for: 0.0,
             done: false,
             skip: false,
@@ -166,8 +171,6 @@ const FLOATER_Z: i32 = 500;
 const PROJECTILE_SECS: f32 = 0.18;
 #[derive(Component)]
 struct StatusLetters(UnitId);
-#[derive(Component)]
-struct Badge(UnitId);
 #[derive(Component)]
 struct TickText;
 #[derive(Component)]
@@ -367,25 +370,6 @@ fn spawn_unit(board: &mut ChildSpawnerCommands, unit: &battler_sim::Unit, sprite
             .with_children(|b| {
                 kit::spawn_bar(b, fill, 100.0, percent(100), 12.0, HpFill(unit.id));
             });
-            // The badge naming the card that just ran: a purple tag over the bar,
-            // wider than the cell so long names fit.
-            v.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(-24),
-                    right: px(-24),
-                    bottom: px(size + 18.0),
-                    height: px(26),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                kit::sliced(kit::img::TAG_SIGNATURE, 4.0),
-                Visibility::Hidden,
-                Badge(unit.id),
-                ZIndex(3),
-            ))
-            .with_child(heading("", 12.0, color::SIG_TEXT));
             // Pips and status letters at the feet.
             v.spawn((
                 Node {
@@ -428,9 +412,6 @@ fn advance(
         return;
     }
     let dt = time.delta_secs() * settings.speed as f32;
-    for (_, left) in pb.badges.values_mut() {
-        *left -= dt;
-    }
 
     if pb.skip {
         pb.battle.run_to_end();
@@ -507,7 +488,7 @@ fn feet(pb: &Playback, id: UnitId) -> Option<Vec2> {
     pb.screen.get(&id).copied()
 }
 
-/// Turns one sim event into animation: badges, floating numbers, lunges and
+/// Turns one sim event into animation: floating numbers, lunges and
 /// projectiles, and spell effects (see `effects.rs`).
 fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: &Event) {
     match *event {
@@ -520,8 +501,6 @@ fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: 
                     .and_then(|u| u.program.nodes().get(n).map(|node| node.action)),
                 CardRef::Default => None,
             };
-            let label = action.map_or_else(|| "Attack".to_string(), cards::action_name);
-            pb.badges.insert(unit, (label, TICK_SECONDS * 1.6));
             if let Some(ability) = action.and_then(|a| a.ability()) {
                 pb.casting.insert(unit, ability);
             }
@@ -529,7 +508,9 @@ fn show_event(commands: &mut Commands, board: Entity, pb: &mut Playback, event: 
         Event::Attacked { attacker, target, damage, crit } => {
             show_hit(commands, board, pb, attacker, target, damage, crit);
         }
-        Event::Healed { target, amount, .. } => {
+        Event::Healed { healer, target, amount } => {
+            *pb.healing.entry(healer).or_default() += amount;
+            pb.meters_dirty = true;
             if let Some(p) = chest(pb, target) {
                 spawn_floater(commands, board, p, format!("+{amount}"), color::GOOD, 16.0);
             }
@@ -616,6 +597,8 @@ fn show_hit(
     }
     motion::knock(&mut pb.bodies, target, attacker, if crit { 160.0 } else { 90.0 });
     if damage > 0 {
+        *pb.damage.entry(attacker).or_default() += damage;
+        pb.meters_dirty = true;
         pb.anims.entry(target).or_default().flash = FLASH_SECS + delay;
     }
     let Some(p) = chest(pb, target) else { return };
@@ -936,15 +919,10 @@ fn unit_pose(
 fn animate_units(
     pb: Res<Playback>,
     art: Res<Sprites>,
-    mut views: Query<(&UnitView, &mut Node, &mut ZIndex), (Without<HpFill>, Without<Badge>)>,
-    mut bars: Query<
-        (&HpFill, &mut Node, &mut ImageNode),
-        (Without<UnitView>, Without<Badge>, Without<UnitSprite>),
-    >,
+    mut views: Query<(&UnitView, &mut Node, &mut ZIndex), Without<HpFill>>,
+    mut bars: Query<(&HpFill, &mut Node, &mut ImageNode), (Without<UnitView>, Without<UnitSprite>)>,
     mut sprites: Query<(&UnitSprite, &mut ImageNode, &mut UiTransform), Without<HpFill>>,
-    mut badges: Query<(&Badge, &mut Visibility, &Children), (Without<UnitView>, Without<HpFill>)>,
     mut letters: Query<(&StatusLetters, &mut Text)>,
-    mut badge_text: Query<&mut Text, Without<StatusLetters>>,
 ) {
     let battle = &pb.battle;
     let tick = battle.tick();
@@ -1042,21 +1020,6 @@ fn animate_units(
             if **text != out {
                 **text = out;
             }
-        }
-    }
-    for (badge, mut vis, children) in &mut badges {
-        match pb.badges.get(&badge.0) {
-            Some((label, left)) if *left > 0.0 => {
-                *vis = Visibility::Inherited;
-                for child in <[Entity]>::iter(children) {
-                    if let Ok(mut t) = badge_text.get_mut(*child)
-                        && **t != *label
-                    {
-                        **t = label.clone();
-                    }
-                }
-            }
-            _ => *vis = Visibility::Hidden,
         }
     }
 }

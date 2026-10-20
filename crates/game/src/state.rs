@@ -71,12 +71,30 @@ impl Rev {
 pub struct Settings {
     pub speed: u32,
     pub card_trace: bool,
+    /// The players list on the right (toggled with its square button).
+    pub show_players: bool,
+    /// The damage and healing meters (toggled with their square button).
+    pub show_meters: bool,
+    pub meter_tab: MeterTab,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { speed: 1, card_trace: false }
+        Self {
+            speed: 1,
+            card_trace: false,
+            show_players: true,
+            show_meters: false,
+            meter_tab: MeterTab::Damage,
+        }
     }
+}
+
+/// Which total the battle meters rank units by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeterTab {
+    Damage,
+    Healing,
 }
 
 /// Main menu UI state.

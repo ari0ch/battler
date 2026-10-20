@@ -64,6 +64,9 @@ pub fn apply_actions(
             UiAction::MainMenu => next_app.set(AppState::MainMenu),
             UiAction::Speed(s) => settings.speed = s,
             UiAction::ToggleTrace => settings.card_trace = !settings.card_trace,
+            UiAction::TogglePlayers => settings.show_players = !settings.show_players,
+            UiAction::ToggleMeters => settings.show_meters = !settings.show_meters,
+            UiAction::MeterTab(tab) => settings.meter_tab = tab,
             UiAction::Skip => {
                 if let Some(pb) = playback.as_mut() {
                     pb.skip = true;
@@ -176,6 +179,7 @@ fn planning_action(
         UiAction::PaletteBlock(block) => editor::click_block(lobby, planning, block),
         UiAction::CycleSlot(card, slot) => editor::cycle_slot(lobby, planning, card, slot),
         UiAction::ClearCard(card) => editor::clear_card(lobby, planning, card),
+        UiAction::RemoveBlock(card, slot) => editor::remove_block(lobby, planning, card, slot),
         UiAction::CardUp(card) => editor::card_up(lobby, planning, card),
         UiAction::Drop(source, target) => match (source, target) {
             (DragSource::Unit(from), DropTarget::Cell(p) | DropTarget::Field(p)) => {
@@ -191,7 +195,11 @@ fn planning_action(
             (DragSource::Block(block), DropTarget::Card(card)) => {
                 editor::drop_block(lobby, planning, card, block)
             }
-            (DragSource::Block(_), _) | (DragSource::Unit(_), DropTarget::Card(_)) => {}
+            (DragSource::Placed(from, slot), DropTarget::Card(to)) => {
+                editor::move_block(lobby, planning, from, slot, to)
+            }
+            (DragSource::Block(_) | DragSource::Placed(..), _)
+            | (DragSource::Unit(_), DropTarget::Card(_)) => {}
         },
         _ => {}
     }
