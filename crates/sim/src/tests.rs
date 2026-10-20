@@ -1171,3 +1171,57 @@ fn scouts_map_moves_forward_on_its_own_half_only() {
     b.scout_ahead();
     assert_eq!(unit_of(&b, scout).pos.x, 1);
 }
+
+// ----- Pathfinding ------------------------------------------------------------
+
+fn moved_to(events: &[Event], unit: UnitId) -> Option<Pos> {
+    events.iter().find_map(|e| match e {
+        Event::Moved { unit: u, to, .. } if *u == unit => Some(*to),
+        _ => None,
+    })
+}
+
+#[test]
+fn advancing_walks_around_a_blocking_ally() {
+    // Grub, an ally standing in front of him, and the enemy behind that ally.
+    let mut b = battle(4, 3);
+    let grub = add(&mut b, Team::Player, 0, 1, Grub, &[]);
+    dummy(&mut b, Team::Player, 1, 1, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 3, 1, BramGatewarden);
+    let to = moved_to(&b.step(), grub).expect("finds a way round instead of standing still");
+    assert_eq!(to.x, 0, "steps sideways first");
+    assert_ne!(to.y, 1);
+}
+
+#[test]
+fn advancing_heads_for_a_reachable_enemy_when_the_nearest_is_walled_in() {
+    // The nearest enemy (top right) is boxed in by its allies; a farther one
+    // (bottom) can be reached.
+    let mut b = battle(5, 4);
+    let grub = add(&mut b, Team::Player, 0, 0, Grub, &[]);
+    dummy(&mut b, Team::Enemy, 3, 0, Nettle);
+    dummy(&mut b, Team::Enemy, 2, 0, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 3, 1, BramGatewarden);
+    dummy(&mut b, Team::Enemy, 4, 0, BramGatewarden);
+    // Grub can always reach someone, so he should never stand still.
+    for _ in 0..3 {
+        let events = b.step();
+        let attacked = events
+            .iter()
+            .any(|e| matches!(e, Event::Attacked { attacker, .. } if *attacker == grub));
+        assert!(attacked || moved_to(&events, grub).is_some());
+    }
+}
+
+#[test]
+fn pathfinding_is_deterministic() {
+    let run = || {
+        let mut b = battle(6, 4);
+        let grub = add(&mut b, Team::Player, 0, 1, Grub, &[]);
+        dummy(&mut b, Team::Player, 1, 1, BramGatewarden);
+        dummy(&mut b, Team::Player, 1, 2, SirAldric);
+        dummy(&mut b, Team::Enemy, 5, 2, BramGatewarden);
+        (0..4).map(|_| moved_to(&b.step(), grub)).collect::<Vec<_>>()
+    };
+    assert_eq!(run(), run());
+}

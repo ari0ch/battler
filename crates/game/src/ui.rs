@@ -441,8 +441,26 @@ pub fn spawn_stage(commands: &mut Commands, scope: impl Bundle, background: Colo
     stage
 }
 
+/// Text from this size up is a title, in Pixelify Sans; anything smaller
+/// (labels, card text, every number) is in Jersey 15, whose digits can't be
+/// confused (Pixelify's 2 and 8 are nearly identical at small sizes).
+const TITLE_SIZE: f32 = 24.0;
+/// Jersey 15 draws smaller than Pixelify at the same size, so it is scaled up
+/// to match their heights.
+const BODY_SCALE: f32 = 1.2;
+
 fn text_font(size: f32, weight: FontWeight) -> TextFont {
-    TextFont { font: kit::FONT.into(), font_size: FontSize::Px(size), weight, ..default() }
+    if size >= TITLE_SIZE {
+        TextFont { font: kit::FONT.into(), font_size: FontSize::Px(size), weight, ..default() }
+    } else {
+        // Jersey 15 has one weight.
+        TextFont {
+            font: kit::FONT_BODY.into(),
+            font_size: FontSize::Px((size * BODY_SCALE).round()),
+            weight: FontWeight::NORMAL,
+            ..default()
+        }
+    }
 }
 
 /// Text in the kit's pixel font that never intercepts the pointer (so clicks

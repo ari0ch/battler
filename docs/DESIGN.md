@@ -296,6 +296,14 @@ floats; nothing here feeds back into the sim.
 - **Not yet:** per-character animation frames (the sprites are single frames), screen
   shake, sound.
 
+**Planning input (Oct 2026).** One unit is selected at a time. Clicking an occupied cell
+or bench slot selects that unit (and opens its program); only clicking an empty spot
+moves the selected unit there, so a click can never swap two units. Moving and swapping
+is done by dragging.
+
+**Fonts.** Titles (24 px and up) use Pixelify Sans; everything smaller uses Jersey 15,
+whose digits stay distinct (2 vs 8, percentages on cards, gold), at 1.2x the asked size.
+
 ### Analysis
 
 - **Post-game replay** of any battle from the run, for analysis rather than mid-run
@@ -461,6 +469,13 @@ Rules:
 - **Locked final rule:** if no card fires, the unit attacks the nearest enemy, advancing
   toward it when out of range. It is not one of the unit's nodes and can't be removed, so
   units never stand idle.
+- **Movement (pathfinding, Oct 2026).** A unit that needs to close in walks the shortest
+  path round other units (breadth-first search over free cells, neighbours in a fixed
+  order, so it is deterministic): first towards a cell from which its target is in
+  range; if every such cell is cut off, towards any enemy it can reach. Only when no
+  path exists at all does it fall back to a plain step towards the target. Protecting
+  an ally uses the same search. Before this, units took the greedy step and got stuck
+  bumping against allies in the way.
 - **Targeting:** actions with a target have a dropdown: nearest, lowest HP, highest HP,
   strongest, ranged. Ties break by distance, then unit id. Targeting the lowest-HP
   **enemy** is Ranger-only; for allies, "lowest HP" means most hurt by percentage.

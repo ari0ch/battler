@@ -92,16 +92,18 @@ Design context lives in `docs/DESIGN.md`. Keep it updated when decisions are mad
 - Screens rebuild from state whenever the `Rev` resource is bumped (every applied
   action, every state entry). Fast-changing bits (timer, toasts, battle animation)
   update in place via marker components, so a rebuild never interrupts a drag.
-- Text uses `ui::text` / `ui::heading` / `ui::outlined` (the kit font). Keep it ASCII.
+- Text uses `ui::text` / `ui::heading` / `ui::outlined`. Sizes from 24 px use the kit font
+  (Pixelify Sans, `kit::FONT`); smaller text uses Jersey 15 (`kit::FONT_BODY`, scaled 1.2x)
+  because Pixelify's digits are hard to tell apart. Keep it ASCII.
 - Bevy 0.20 source is the best API reference: `git clone --depth 1 --branch v0.20.0
   --filter=blob:none --sparse https://github.com/bevyengine/bevy` and sparse-checkout
   `examples/ui` and the crate sources you need.
 
 ## Bevy
 
-Pinned to 0.20 with only the `2d` and `ui` feature collections, to keep the WASM build
-small. Check the docs for the pinned version, not older examples, because APIs change
-between releases. Upgrades are deliberate and follow the official migration guide.
+Pinned to 0.20 with default features off and the needed features listed one by one in
+the root `Cargo.toml`, to keep the WASM build small. Check the docs for the pinned
+version, not older examples, because APIs change between releases. Upgrades are deliberate and follow the official migration guide.
 
 ## Working from Claude's cloud workspace
 

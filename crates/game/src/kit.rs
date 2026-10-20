@@ -20,8 +20,11 @@ use bevy::prelude::*;
 /// Pixel scale of the kit on screen.
 pub const SCALE: f32 = 2.0;
 
-/// Pixelify Sans (SIL Open Font License, `assets/fonts/OFL.txt`).
+/// Pixelify Sans (SIL Open Font License, `assets/fonts/OFL.txt`), for titles.
 pub const FONT: Handle<Font> = uuid_handle!("8a0d50f0-0efc-529f-9b2e-51f08da24f4f");
+/// Jersey 15 (SIL Open Font License, `assets/fonts/OFL-Jersey15.txt`), for
+/// body text and numbers: its digits stay distinct at small sizes.
+pub const FONT_BODY: Handle<Font> = uuid_handle!("b4cfcab7-4dc1-4d1c-99fa-434e4e665bca");
 
 /// One constant handle per kit image, named after its file in `assets/ui`.
 pub mod img {
@@ -141,8 +144,10 @@ impl Plugin for KitPlugin {
             images.insert(handle, image).expect("constant handles are always valid");
         }
         let font = Font::from_bytes(include_bytes!("../assets/fonts/PixelifySans.ttf").to_vec());
+        let body = Font::from_bytes(include_bytes!("../assets/fonts/Jersey15.ttf").to_vec());
         let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
         fonts.insert(&FONT, font).expect("constant handles are always valid");
+        fonts.insert(&FONT_BODY, body).expect("constant handles are always valid");
     }
 }
 

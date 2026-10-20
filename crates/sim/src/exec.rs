@@ -269,8 +269,22 @@ impl Battle {
         if self.dist(i, j) <= self.units[i].stats.range {
             return false;
         }
-        let dest = self.units[j].pos;
-        self.try_step_toward(i, dest, events)
+        // Head for a cell in range of the nearest enemy; if every way there is
+        // blocked, for one in range of any enemy that can be reached.
+        let range = self.units[i].stats.range;
+        let target = self.units[j].pos;
+        let enemies: Vec<Pos> = self.enemies_of(i).map(|k| self.units[k].pos).collect();
+        let step = self
+            .path_step(i, |p| p.distance(target) <= range)
+            .or_else(|| self.path_step(i, |p| enemies.iter().any(|e| p.distance(*e) <= range)));
+        match step {
+            Some(to) => {
+                self.move_unit(i, to, events);
+                true
+            }
+            // Walled in completely: at least shuffle closer if possible.
+            None => self.try_step_toward(i, target, events),
+        }
     }
 
     fn try_attack(&mut self, i: usize, target: Target, events: &mut Vec<Event>) -> bool {
@@ -329,7 +343,13 @@ impl Battle {
             return false;
         }
         let dest = self.units[j].pos;
-        self.try_step_toward(i, dest, events)
+        match self.path_step(i, |p| p.distance(dest) <= 1) {
+            Some(to) => {
+                self.move_unit(i, to, events);
+                true
+            }
+            None => self.try_step_toward(i, dest, events),
+        }
     }
 
     // ----- Knights ---------------------------------------------------------
@@ -875,6 +895,43 @@ impl Battle {
         t.hp += amount;
         let (healer, target) = (self.units[healer].id, self.units[target].id);
         events.push(Event::Healed { healer, target, amount });
+    }
+
+    /// The first step of the shortest walk from unit `i` to a cell where
+    /// `goal` holds, through free cells only (a breadth-first search; units
+    /// block). `None` if no goal cell can be reached, or the unit already
+    /// stands on one.
+    ///
+    /// Deterministic: cells are explored in the fixed order of
+    /// [`Pos::neighbours`], so ties between equally short routes always break
+    /// the same way. The board is tiny (56 cells), so this is cheap.
+    fn path_step(&self, i: usize, goal: impl Fn(Pos) -> bool) -> Option<Pos> {
+        let start = self.units[i].pos;
+        if goal(start) {
+            return None;
+        }
+        let (w, h) = (self.width, self.height);
+        let index = |p: Pos| (p.x * h + p.y) as usize;
+        // For each visited cell, the first step taken from `start` to get there.
+        let mut first: Vec<Option<Pos>> = vec![None; (w * h) as usize];
+        let mut seen = vec![false; (w * h) as usize];
+        seen[index(start)] = true;
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(p) = queue.pop_front() {
+            for n in p.neighbours() {
+                if !self.is_free(n) || seen[index(n)] {
+                    continue;
+                }
+                seen[index(n)] = true;
+                let step = if p == start { n } else { first[index(p)].expect("set on visit") };
+                if goal(n) {
+                    return Some(step);
+                }
+                first[index(n)] = Some(step);
+                queue.push_back(n);
+            }
+        }
+        None
     }
 
     fn try_step_toward(&mut self, i: usize, dest: Pos, events: &mut Vec<Event>) -> bool {

@@ -120,6 +120,26 @@ fn move_selected_to(lobby: &mut Lobby, planning: &mut Planning, to: Location) {
     }
 }
 
+/// Clicking a board cell or bench slot: if a unit is there, select it (as if
+/// the unit itself was clicked); if it's empty, move the selected unit there.
+///
+/// Clicking a unit also reaches the spot beneath it (units let the pointer
+/// through for drops). The unit's own click normally wins, but if it is ever
+/// lost, moving the selected unit here would swap two units by surprise, so
+/// an occupied spot never takes a move from a click. Swaps are for dragging.
+fn click_spot(lobby: &mut Lobby, planning: &mut Planning, loc: Location) {
+    match lobby.me().unit_at(loc).map(|u| u.id) {
+        Some(id) => {
+            if planning.selected != Some(id) {
+                planning.selected = Some(id);
+                editor::load_draft(lobby.me(), planning);
+            }
+            planning.editor_open = true;
+        }
+        None => move_selected_to(lobby, planning, loc),
+    }
+}
+
 fn planning_action(
     commands: &mut Commands,
     lobby: &mut Lobby,
@@ -168,8 +188,8 @@ fn planning_action(
             // Picking a unit brings up its program.
             planning.editor_open = true;
         }
-        UiAction::ClickCell(p) => move_selected_to(lobby, planning, Location::Board(p)),
-        UiAction::ClickBench(i) => move_selected_to(lobby, planning, Location::Bench(i)),
+        UiAction::ClickCell(p) => click_spot(lobby, planning, Location::Board(p)),
+        UiAction::ClickBench(i) => click_spot(lobby, planning, Location::Bench(i)),
         UiAction::Sell => {
             if let Some(loc) = selected_loc(lobby.me(), planning) {
                 sell(lobby, planning, loc);
