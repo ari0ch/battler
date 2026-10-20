@@ -1,5 +1,10 @@
-//! Character and monster sprites: 32x32 pixel art facing right, drawn at whole-number
-//! scales with nearest-neighbour sampling so the pixels stay crisp.
+//! Character and monster sprites: 32x32 pixel art, drawn at whole-number scales
+//! with nearest-neighbour sampling so the pixels stay crisp.
+//!
+//! The roster art faces right in a front three-quarter view, which on the
+//! isometric field is south-east (towards the camera); mirrored, it is
+//! south-west. Units that also have back art (`assets/sprites/back`) use it
+//! for north-east, mirrored for north-west; the rest show their front.
 //!
 //! The PNGs are embedded in the binary with `include_bytes!` rather than loaded
 //! through the `AssetServer`. They are tiny (about 4 KB each), and embedding
@@ -11,6 +16,8 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 
+use crate::field::Facing;
+
 /// The sprite's size in source pixels.
 pub const SPRITE_PX: f32 = 32.0;
 
@@ -20,6 +27,8 @@ pub const SPRITE_PX: f32 = 32.0;
 pub struct Sprites {
     characters: Vec<Handle<Image>>,
     monsters: Vec<Handle<Image>>,
+    /// Back views (facing north-east), where drawn; same indexing.
+    character_backs: Vec<Option<Handle<Image>>>,
 }
 
 impl Sprites {
@@ -38,6 +47,17 @@ impl Sprites {
             UnitKind::Character(c) => self.character(c),
             UnitKind::Monster(m) => self.monster(m),
         }
+    }
+
+    /// The image and mirroring that show `kind` facing `facing`: the back art
+    /// for the two northern facings when there is some, else the front.
+    pub fn facing(&self, kind: UnitKind, facing: Facing) -> (Handle<Image>, bool) {
+        let back = match kind {
+            UnitKind::Character(c) if facing.is_north() => self.character_backs[c.index()].clone(),
+            _ => None,
+        };
+        // Both views are drawn facing east; west is the mirror image.
+        (back.unwrap_or_else(|| self.unit(kind)), !facing.is_east())
     }
 }
 
@@ -72,7 +92,11 @@ impl FromWorld for Sprites {
         let characters =
             Character::ALL.into_iter().map(|c| load(c.name(), character_png(c))).collect();
         let monsters = Monster::ALL.into_iter().map(|m| load(m.name(), monster_png(m))).collect();
-        Self { characters, monsters }
+        let character_backs = Character::ALL
+            .into_iter()
+            .map(|c| character_back_png(c).map(|png| load(c.name(), png)))
+            .collect();
+        Self { characters, monsters, character_backs }
     }
 }
 
@@ -99,6 +123,22 @@ fn character_png(c: Character) -> &'static [u8] {
         Grub => include_bytes!("../assets/sprites/grub_ironjaw.png"),
         Hilda => include_bytes!("../assets/sprites/hilda_bloodaxe.png"),
         Korgath => include_bytes!("../assets/sprites/korgath_the_undying.png"),
+    }
+}
+
+/// Back views drawn so far. `Option` because the art is still being made;
+/// units without one show their front from every side.
+fn character_back_png(c: Character) -> Option<&'static [u8]> {
+    use Character::*;
+    match c {
+        BramGatewarden => {
+            Some(include_bytes!("../assets/sprites/back/bram_gatewarden.png").as_slice())
+        }
+        Elowen => Some(include_bytes!("../assets/sprites/back/elowen_starshot.png").as_slice()),
+        Mirelle => {
+            Some(include_bytes!("../assets/sprites/back/mirelle_frostweaver.png").as_slice())
+        }
+        _ => None,
     }
 }
 

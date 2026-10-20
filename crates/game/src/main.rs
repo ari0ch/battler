@@ -8,6 +8,7 @@ mod battle;
 mod cards;
 mod editor;
 mod effects;
+mod field;
 mod kit;
 mod menu;
 mod motion;
@@ -44,6 +45,7 @@ fn main() {
         .init_resource::<sprites::Sprites>()
         .add_plugins(kit::KitPlugin)
         .add_plugins(ui::UiPlugin)
+        .add_plugins(field::FieldPlugin)
         .add_systems(Startup, |mut commands: Commands| {
             commands.spawn(Camera2d);
         })

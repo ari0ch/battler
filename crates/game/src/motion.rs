@@ -41,7 +41,9 @@ pub struct Body {
     offset: Vec2,
     /// A melee lunge in progress: towards whom, and seconds left.
     lunge: Option<(UnitId, f32)>,
-    pub facing_left: bool,
+    /// The way the unit faces, as a direction on the ground (x along lanes,
+    /// y along depth, towards the enemy for the player's side).
+    pub facing: Vec2,
     /// Distance walked, which drives the walking bob.
     pub stride: f32,
 }
@@ -75,12 +77,18 @@ pub fn spawn(
                 radius: radius(u),
                 offset,
                 lunge: None,
-                facing_left: u.team == Team::Enemy,
+                facing: team_facing(u.team),
                 stride: 0.0,
             };
             (u.id, body)
         })
         .collect()
+}
+
+/// Which way a team faces when standing still: across the board, towards
+/// the other side (the player's side starts at depth 0).
+pub fn team_facing(team: Team) -> Vec2 {
+    if team == Team::Player { Vec2::Y } else { Vec2::NEG_Y }
 }
 
 /// Starts a melee lunge from `attacker` towards `target`.
@@ -160,10 +168,10 @@ pub fn step(
         b.stride += b.vel.length() * dt;
         // Face the enemy being attacked, else the way it's walking, else the
         // team's default (towards the other side).
-        b.facing_left = match facing_target {
-            Some(v) => v.x < b.pos.x,
-            None if b.vel.x.abs() > STILL => b.vel.x < 0.0,
-            None => u.team == Team::Enemy,
+        b.facing = match facing_target {
+            Some(v) => (v - b.pos).normalize_or(b.facing),
+            None if b.vel.length() > STILL => b.vel.normalize(),
+            None => team_facing(u.team),
         };
     }
 
@@ -277,6 +285,19 @@ mod tests {
         }
         assert!(closest < start.distance(bodies[&foe].pos) - 8.0, "lunged forward");
         assert!(bodies[&me].pos.distance(start) < 3.0, "came back");
+    }
+
+    #[test]
+    fn bodies_face_their_target_or_the_other_side() {
+        let b = battle(&[(Team::Player, 3, 3), (Team::Enemy, 4, 3)]);
+        let mut bodies = spawn(&b, centre, |_| 22.0);
+        let (me, foe) = (b.units()[0].id, b.units()[1].id);
+        assert_eq!(bodies[&me].facing, Vec2::Y);
+        assert_eq!(bodies[&foe].facing, Vec2::NEG_Y);
+        lunge(&mut bodies, me, foe);
+        step(&mut bodies, &b, centre, SIZE, 1.0 / 60.0);
+        let towards = bodies[&foe].pos - bodies[&me].pos;
+        assert!(bodies[&me].facing.dot(towards) > 0.0);
     }
 
     #[test]
