@@ -323,23 +323,20 @@ floats; nothing here feeds back into the sim.
 1. **More randomness?** Crits are implemented (see below). Dodges or damage ranges could
    follow if fights feel too predictable.
 2. **Bot difficulty:** one bot strategy for now; difficulty levels may follow.
-3. **Battle perspective.** The profile-view sprites suit the shop and bench but read
-   poorly on the top-down battlefield. Options studied (canvas artboard "Perspective",
-   scripts in `tools/art/`):
-   1. *Tilted field with 3/4 front and back sprites:* squash the field vertically (about
-      0.6) and draw each character twice, facing up (back) and down (front). Keeps the
-      grid and all sim maths; costs a second sprite per unit (36 + 8 more).
-   2. *Full isometric:* diamond tiles and four facings. Looks the richest, but changes
-      board drawing, picking, depth sorting and needs about 4x the art.
-   3. *True top-down sprites:* matches the field, but heads and shoulders lose most of
-      the character the current sprites have.
-   4. *Animated side view:* keep profile sprites and add walk/attack frames, but it
-      reads best with teams facing left and right, so the board would turn sideways.
-   5. *Standees:* keep today's sprites, stand them on a tilted field with a base and a
-      strong shadow, like board-game minis. Cheapest, fits the art we have.
-
-   Recommendation: standees now (a few days, no new art), then option 1 as the upgrade
-   once the roster settles. Undecided.
+3. **Battle perspective: decided, full isometric (Oct 2026).** The profile sprites read
+   poorly on the top-down field. After the study (canvas "Perspective"; tilted 3/4,
+   isometric, top-down, side view, standees) we chose true isometric:
+   - The sim's grid is drawn as a diamond of 96 x 48 tiles (720 x 360 on screen) on a
+     slab of earth; your half bottom-left, the enemy top-right, fights along the diagonal.
+   - Four facings, two drawn: today's sprites are already front-3/4 facing right, so they
+     are south-east (mirrored for south-west). New back sprites face north-east (mirrored
+     for north-west): 26 to draw. Shop, bench and tooltips keep the front sprites.
+   - Planning: units face the camera; in battle they turn towards the enemy.
+   - Ground effects (rings, novas) become 2:1 ellipses.
+   - Engine work: one cell/body-to-screen projection, depth-sorted drawing, picking and
+     dropping on diamonds from the cursor position, bosses at 1.5x on one tile.
+   - Mockup first (canvas artboards 12-14, `tools/art/iso.py` and `iso_scenes.py`), then
+     the engine, then the remaining back sprites.
 4. **Simulation pass** on player level numbers, shop odds and block unlocks once built.
 
 ## Roster (agreed draft, 18 characters)

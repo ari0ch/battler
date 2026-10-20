@@ -20,3 +20,9 @@ Everything is drawn at 1x and shown at whole-number scales (2x on the board).
 `scenes.py` (a battle scene per option plus walk and attack GIFs) made the perspective
 comparison in `docs/DESIGN.md`. Run `python3 perspective.py && python3 scenes.py`
 after `kit.py` (scenes reuse `out/ui/field_grass.png`); output goes to `out/persp/`.
+
+## Isometric
+
+`iso.py` draws the back-facing (north-east) sprites and a facing sheet; `iso_scenes.py`
+renders the diamond board and the isometric planning and battle mockups. Output goes to
+`out/iso/`.
